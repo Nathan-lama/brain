@@ -148,16 +148,6 @@ export default function GraphPage() {
   const [prevReactFlowNodes, setPrevReactFlowNodes] = useState<RFNode[] | null>(null);
   const [prevAllSocieteNodes, setPrevAllSocieteNodes] = useState<RFNode[] | null>(null);
 
-  if (reactFlowNodes !== prevReactFlowNodes) {
-    setRfEditionNodes(reactFlowNodes);
-    setPrevReactFlowNodes(reactFlowNodes);
-  }
-
-  if (allSocieteNodes !== prevAllSocieteNodes) {
-    setRfSocieteNodes(allSocieteNodes);
-    setPrevAllSocieteNodes(allSocieteNodes);
-  }
-
   const onEditionNodesChange = React.useCallback((changes: NodeChange[]) => {
     setRfEditionNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
@@ -670,6 +660,16 @@ export default function GraphPage() {
   }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation, finalVisibleNodeIds, draggedPositions]);
 
   const allSocieteNodes = useMemo(() => [...domainGroups, ...societeNodes], [domainGroups, societeNodes]);
+
+  if (reactFlowNodes !== prevReactFlowNodes) {
+    setRfEditionNodes(reactFlowNodes);
+    setPrevReactFlowNodes(reactFlowNodes);
+  }
+
+  if (allSocieteNodes !== prevAllSocieteNodes) {
+    setRfSocieteNodes(allSocieteNodes);
+    setPrevAllSocieteNodes(allSocieteNodes);
+  }
 
   const handleNodeClick = (nodeId: string) => {
     setSelectedNodeId(nodeId);
