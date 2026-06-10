@@ -208,11 +208,12 @@ export default function GraphPage() {
   const [solveResult, setSolveResult] = useState<SolveResponse | null>(null);
 
   const solveMutation = useSolve();
+  const { mutate: solve } = solveMutation;
   const { data: alternativesData, refetch: refetchAlternatives } = useSolveAlternatives(3);
 
   // Automatically re-solve coherence when graphData changes
   React.useEffect(() => {
-    solveMutation.mutate(undefined, {
+    solve(undefined, {
       onSuccess: (res) => {
         setSolveResult(res);
         if (isCoherenceActive) {
@@ -220,7 +221,7 @@ export default function GraphPage() {
         }
       }
     });
-  }, [graphData, isCoherenceActive, solveMutation, refetchAlternatives]);
+  }, [graphData, isCoherenceActive, solve, refetchAlternatives]);
 
   const activeViolatedConstraints = useMemo(() => {
     if (!isCoherenceActive) return [];
