@@ -1299,7 +1299,7 @@ export default function GraphPage() {
 
       {/* Control Bar & Filters (hidden on Historique tab) */}
       {(activeTab === "graph" || activeTab === "societe") && (
-        <section className="border-b border-slate-900 bg-slate-950/40 backdrop-blur-xs py-3 px-6">
+        <section className="relative z-30 border-b border-slate-900 bg-slate-950/40 backdrop-blur-xs py-3 px-6">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-2 text-slate-400 text-xs font-semibold uppercase tracking-wider">
