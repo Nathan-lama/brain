@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ReactFlow, Controls, Background, MarkerType, type NodeChange } from "@xyflow/react";
+import { ReactFlow, Controls, Background, MarkerType, applyNodeChanges, type NodeChange, type Node as RFNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { 
   useGraph, 
@@ -142,16 +142,28 @@ export default function GraphPage() {
 
   const [draggedPositions, setDraggedPositions] = useState<Record<string, { x: number; y: number }>>({});
 
-  const onNodesChange = React.useCallback((changes: NodeChange[]) => {
-    setDraggedPositions((prev) => {
-      const next = { ...prev };
-      changes.forEach((change) => {
-        if (change.type === "position" && change.position) {
-          next[change.id] = change.position;
-        }
-      });
-      return next;
-    });
+  const [rfEditionNodes, setRfEditionNodes] = useState<RFNode[]>([]);
+  const [rfSocieteNodes, setRfSocieteNodes] = useState<RFNode[]>([]);
+
+  const [prevReactFlowNodes, setPrevReactFlowNodes] = useState<RFNode[] | null>(null);
+  const [prevAllSocieteNodes, setPrevAllSocieteNodes] = useState<RFNode[] | null>(null);
+
+  if (reactFlowNodes !== prevReactFlowNodes) {
+    setRfEditionNodes(reactFlowNodes);
+    setPrevReactFlowNodes(reactFlowNodes);
+  }
+
+  if (allSocieteNodes !== prevAllSocieteNodes) {
+    setRfSocieteNodes(allSocieteNodes);
+    setPrevAllSocieteNodes(allSocieteNodes);
+  }
+
+  const onEditionNodesChange = React.useCallback((changes: NodeChange[]) => {
+    setRfEditionNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
+
+  const onSocieteNodesChange = React.useCallback((changes: NodeChange[]) => {
+    setRfSocieteNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
   // Click outside to close domain multi-select dropdown
@@ -1508,11 +1520,11 @@ export default function GraphPage() {
         ) : activeTab === "societe" ? (
           <div className="absolute inset-0">
             <ReactFlow
-              nodes={allSocieteNodes}
+              nodes={rfSocieteNodes}
               edges={reactFlowEdges}
               nodeTypes={nodeTypes}
               fitView
-              onNodesChange={onNodesChange}
+              onNodesChange={onSocieteNodesChange}
               onNodeClick={(_, node) => {
                 if (node.type !== "domainGroup") {
                   handleNodeClick(node.id);
@@ -1537,11 +1549,11 @@ export default function GraphPage() {
         ) : viewMode === "edition" ? (
           <div className="absolute inset-0">
             <ReactFlow
-              nodes={reactFlowNodes}
+              nodes={rfEditionNodes}
               edges={reactFlowEdges}
               nodeTypes={nodeTypes}
               fitView
-              onNodesChange={onNodesChange}
+              onNodesChange={onEditionNodesChange}
               onNodeClick={(_, node) => handleNodeClick(node.id)}
               onEdgeClick={(_, edge) => handleEdgeClick(edge.id)}
               onNodeDragStop={(_, node) => {
