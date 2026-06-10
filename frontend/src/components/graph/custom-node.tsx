@@ -76,7 +76,7 @@ export const floatToTierLabel = (val: number) => {
 };
 
 export function CustomGraphNode({ data, selected }: any) {
-  const { text, type, domain, confidence, tier, weight, isTension, isCoherenceActive, isAccepted, isRejected, isDiff, coherence, correspondence } = data;
+  const { text, type, domain, confidence, tier, weight, isTension, isCoherenceActive, isAccepted, isRejected, isDiff, coherence, correspondence, overcommitted, gap } = data;
   const colors = TYPE_COLORS[type] || TYPE_COLORS.descriptif;
   
   const isFactual = ["descriptif", "empirique", "definitionnel"].includes(type);
@@ -89,7 +89,7 @@ export function CustomGraphNode({ data, selected }: any) {
     let diamondBg = colors.bg;
     let diamondOpacity = "";
     let diamondRing = "";
-    let indicatorColor = tierInfo.color;
+    const indicatorColor = tierInfo.color;
 
     if (isCoherenceActive) {
       if (isAccepted) {
@@ -125,6 +125,12 @@ export function CustomGraphNode({ data, selected }: any) {
           position={Position.Top}
           className="opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-500 !w-2 !h-2"
         />
+
+        {overcommitted && (
+          <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-10 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[8px] font-bold uppercase tracking-wider whitespace-nowrap shadow-md animate-pulse">
+            ⚠️ SUR-ENGAGEMENT (+{gap})
+          </div>
+        )}
 
         {/* Diamond Container */}
         <div
@@ -228,6 +234,12 @@ export function CustomGraphNode({ data, selected }: any) {
             {domain}
           </span>
         </div>
+
+        {overcommitted && (
+          <div className="mb-2 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[9px] font-bold uppercase tracking-wide text-center animate-pulse">
+            ⚠️ SUR-ENGAGEMENT (+{gap})
+          </div>
+        )}
 
         {/* Text */}
         <p className="text-slate-200 font-semibold text-xs leading-relaxed mb-3 line-clamp-3 select-none">

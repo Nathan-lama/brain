@@ -69,3 +69,31 @@ Le site est disponible sur : [http://localhost:3000](http://localhost:3000)
 ### URLs de Test
 - Santé du Backend : `curl http://localhost:8000/health` -> `{"status":"ok"}`
 - Page d'accueil : [http://localhost:3000](http://localhost:3000) (affiche "backend: ok")
+
+---
+
+## Dérivation de l'Engagement
+
+Le système calcule de manière autonome et déterministe un **palier d'engagement dérivé** pour chaque conclusion logique, par propagation en chaîne depuis les prémisses sources.
+
+### 1. Règle de Dérivation (Theophrastus / Weakest Link)
+Pour toute conclusion $N$ issue d'une ou plusieurs inférences $I$:
+
+$$derive(N) = \max_{I} \left( \text{clamp}( \min_{P \in \text{premises}(I)} (\text{rang\_effectif}(P)) - \text{malus}(I.\text{strength}), 1, 5 ) \right)$$
+
+Où :
+* **rang_effectif(P)** = $derive(P)$ si $P$ est lui-même issu d'une inférence, sinon son palier manuel.
+* **Malus par force d'inférence** :
+  * Déductif (`deductif`) = `0`
+  * Défaisable Fort (`defaisable_fort`) = `1`
+  * Défaisable Faible (`defaisable_faible`) = `2`
+
+*Le résultat est borné (clampé) strictement entre 1 (spéculatif) et 5 (certain).*
+
+### 2. Choix de Conception : Non-accumulation
+Conformément aux problèmes ouverts en théorie de l'argumentation, nous assumons de ne pas accumuler la force d'arguments convergents vers une même conclusion. Une conclusion reçoit la force du meilleur argument (max de ses inférences directes), sans addition ou sur-pondération quantitative.
+
+### 3. Sur-engagement et Sous-engagement
+Le palier manuel saisi par l'utilisateur n'est jamais écrasé automatiquement. C'est l'écart (gap) qui fournit l'information critique :
+* **Sur-engagement** : Si le palier manuel saisi est strictement supérieur au palier dérivé ($\text{manuel} > \text{dérivé}$). Le nœud est marqué avec un badge orange et l'écart est affiché pour inviter à la prudence.
+* **Sous-engagement** : Si le palier manuel saisi est strictement inférieur au palier dérivé ($\text{manuel} < \text{dérivé}$). Cela traduit une attitude prudente de la part de l'utilisateur, ce qui n'est pas problématique et ne l'alerte donc pas.

@@ -35,6 +35,7 @@ import {
   useUpdateSchemeNode,
   SchemeStrength,
   useHumeValidation,
+  useCommitmentDerivation,
 } from "@/hooks/use-graph-api";
 import { CustomGraphNode, CustomDomainGroupNode, getTierInfo, floatToTierLabel } from "@/components/graph/custom-node";
 import { CytoscapeGraph } from "@/components/graph/cytoscape-graph";
@@ -181,6 +182,7 @@ export default function GraphPage() {
   const { data: tensions } = useTensions();
   const { data: humeValidation } = useHumeValidation();
   const [humeViolationsExpanded, setHumeViolationsExpanded] = useState<boolean>(false);
+  const { data: commitmentDerivation } = useCommitmentDerivation();
   const { data: sensitivity } = useSensitivity();
   const resolveTensionMutation = useResolveTension();
 
@@ -408,6 +410,10 @@ export default function GraphPage() {
         }
       }
 
+      const derivationItem = commitmentDerivation?.results.find((r) => r.node_id === n.id);
+      const overcommitted = derivationItem?.overcommitted ?? false;
+      const gap = derivationItem?.gap ?? null;
+
       return {
         ...n,
         data: {
@@ -418,10 +424,12 @@ export default function GraphPage() {
           isAccepted,
           isRejected,
           isDiff: currentDiffIds.has(n.id),
+          overcommitted,
+          gap,
         },
       };
     });
-  }, [graphData, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds]);
+  }, [graphData, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation]);
 
   const cytoscapeNodes = useMemo(() => {
     if (!graphData?.nodes) return [];
@@ -507,6 +515,10 @@ export default function GraphPage() {
         }
       }
 
+      const derivationItem = commitmentDerivation?.results.find((r) => r.node_id === n.id);
+      const overcommitted = derivationItem?.overcommitted ?? false;
+      const gap = derivationItem?.gap ?? null;
+
       return {
         id: n.id,
         type: "custom",
@@ -518,13 +530,15 @@ export default function GraphPage() {
           isAccepted,
           isRejected,
           isDiff: currentDiffIds.has(n.id),
+          overcommitted,
+          gap,
         },
         parentId,
         extent: "parent" as const,
         position: { x: 20, y: 40 + index * 190 },
       };
     });
-  }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds]);
+  }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation]);
 
   const allSocieteNodes = useMemo(() => [...domainGroups, ...societeNodes], [domainGroups, societeNodes]);
 
@@ -1028,6 +1042,21 @@ export default function GraphPage() {
               )}
               <span>Tensions : {activeTensionsCount !== null ? activeTensionsCount : "—"}</span>
             </Button>
+
+            <div
+              className={`flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 border transition-all h-9 ${
+                commitmentDerivation && commitmentDerivation.count_overcommitted > 0
+                  ? "bg-amber-950/20 border-amber-500/30 text-amber-400"
+                  : "bg-slate-900 border-slate-800 text-slate-400"
+              }`}
+            >
+              {commitmentDerivation && commitmentDerivation.count_overcommitted > 0 ? (
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              ) : (
+                <span className="text-slate-400 text-xs">—</span>
+              )}
+              <span>Sur-engagements : {commitmentDerivation ? commitmentDerivation.count_overcommitted : "—"}</span>
+            </div>
 
             {/* Mode Cohérence Toggle Button */}
             <Button
@@ -1579,6 +1608,62 @@ export default function GraphPage() {
                     </span>
                   </div>
                 </div>
+
+                {/* Dérivation de l'Engagement Section */}
+                {(() => {
+                  const derivationInfo = commitmentDerivation?.results.find((r) => r.node_id === nodeDetails.node.id);
+                  if (!derivationInfo) return null;
+                  return (
+                    <div className={`p-4 rounded-xl space-y-3 border ${
+                      derivationInfo.overcommitted 
+                        ? "bg-amber-950/20 border-amber-500/30 text-amber-400" 
+                        : "bg-slate-900/20 border-slate-900 text-slate-300"
+                    }`}>
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
+                        <span>Dérivation de l&apos;Engagement</span>
+                        {derivationInfo.overcommitted && (
+                          <span className="bg-amber-500/20 border border-amber-500/40 text-amber-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-normal animate-pulse">
+                            Sur-engagement (+{derivationInfo.gap})
+                          </span>
+                        )}
+                        {derivationInfo.undercommitted && (
+                          <span className="bg-blue-500/10 border border-blue-500/30 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-normal">
+                            Sous-engagement
+                          </span>
+                        )}
+                        {derivationInfo.cycle_detected && (
+                          <span className="bg-red-500/20 border border-red-500/40 text-red-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-normal">
+                            Cycle détecté
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-500 block uppercase font-medium">Palier Manuel</span>
+                          <span className="font-semibold text-slate-200 capitalize">
+                            {derivationInfo.manual_tier || "moyen"} (rang: {derivationInfo.manual_rank})
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-500 block uppercase font-medium">Palier Dérivé</span>
+                          <span className="font-semibold text-slate-200 capitalize">
+                            {derivationInfo.derived_tier_label ? `${derivationInfo.derived_tier_label} (rang: ${derivationInfo.derived_rank})` : "—"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {derivationInfo.contributing_scheme_id && (
+                        <div className="text-xs pt-2 border-t border-slate-800/40">
+                          <span className="text-[10px] text-slate-500 block uppercase font-medium">Inférence contributrice</span>
+                          <span className="font-mono text-[10px] text-slate-400">
+                            {derivationInfo.contributing_scheme_id}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Arbitrage Logique */}
                 {activeCoherence === "rejete_arbitre" && (

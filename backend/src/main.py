@@ -103,6 +103,7 @@ from src.schemas import (
     WhatIfResponse,
 )
 from src.services.causal import CausalService
+from src.services.derivation import derive_commitments
 from src.services.embeddings import get_embeddings
 from src.services.extraction import extract_pipeline
 from src.services.solver import CoherenceSolverService
@@ -1998,3 +1999,18 @@ async def get_validate_hume(db: AsyncSession = Depends(get_db)):
         "violations": [v.model_dump(mode="json") for v in violations],
         "count": len(violations),
     }
+
+
+@app.get("/derive/commitments")
+async def get_derive_commitments(db: AsyncSession = Depends(get_db)):
+    res_nodes = await db.execute(select(Node))
+    nodes = res_nodes.scalars().all()
+
+    res_schemes = await db.execute(select(SchemeNode))
+    schemes = res_schemes.scalars().all()
+
+    res_edges = await db.execute(select(Edge))
+    edges = res_edges.scalars().all()
+
+    derivation = derive_commitments(nodes, schemes, edges)
+    return derivation.model_dump(mode="json")

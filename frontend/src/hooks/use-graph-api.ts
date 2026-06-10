@@ -168,6 +168,7 @@ export function useResolveTension() {
       queryClient.invalidateQueries({ queryKey: ["tensions"] });
       queryClient.invalidateQueries({ queryKey: ["node"] });
       queryClient.invalidateQueries({ queryKey: ["events"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -231,6 +232,7 @@ export function useRestoreSnapshot() {
       queryClient.invalidateQueries({ queryKey: ["node"] });
       queryClient.invalidateQueries({ queryKey: ["events"] });
       queryClient.invalidateQueries({ queryKey: ["snapshots"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -375,6 +377,7 @@ export function useAddCausalEdge() {
       queryClient.invalidateQueries({ queryKey: ["causal-graph"] });
       queryClient.invalidateQueries({ queryKey: ["graph"] });
       queryClient.invalidateQueries({ queryKey: ["tensions"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -394,6 +397,7 @@ export function useDeleteCausalEdge() {
       queryClient.invalidateQueries({ queryKey: ["causal-graph"] });
       queryClient.invalidateQueries({ queryKey: ["graph"] });
       queryClient.invalidateQueries({ queryKey: ["tensions"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -573,6 +577,7 @@ export function useDeleteNode() {
       queryClient.invalidateQueries({ queryKey: ["events"] });
       queryClient.invalidateQueries({ queryKey: ["node"] });
       queryClient.invalidateQueries({ queryKey: ["sensitivity"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -597,6 +602,7 @@ export function useUpdateNode() {
       queryClient.invalidateQueries({ queryKey: ["events"] });
       queryClient.invalidateQueries({ queryKey: ["node", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["sensitivity"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -617,6 +623,7 @@ export function useDeleteEdge() {
       queryClient.invalidateQueries({ queryKey: ["tensions"] });
       queryClient.invalidateQueries({ queryKey: ["events"] });
       queryClient.invalidateQueries({ queryKey: ["sensitivity"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -643,6 +650,7 @@ export function useUpdateSchemeNode() {
       queryClient.invalidateQueries({ queryKey: ["node"] });
       queryClient.invalidateQueries({ queryKey: ["sensitivity"] });
       queryClient.invalidateQueries({ queryKey: ["hume-validation"] });
+      queryClient.invalidateQueries({ queryKey: ["commitment-derivation"] });
     },
   });
 }
@@ -676,6 +684,43 @@ export function useHumeValidation() {
       return res.json();
     },
     refetchInterval: 5000,
+  });
+}
+
+export type DerivationItem = {
+  node_id: string;
+  label_court: string;
+  manual_tier: string | null;
+  manual_rank: number;
+  derived_rank: number | null;
+  derived_tier_label: string | null;
+  overcommitted: boolean;
+  gap: number | null;
+  undercommitted: boolean;
+  contributing_scheme_id: string | null;
+  cycle_detected: boolean;
+};
+
+export type CycleItem = {
+  node_ids: string[];
+};
+
+export type DerivationResponse = {
+  results: DerivationItem[];
+  cycles: CycleItem[];
+  count_overcommitted: number;
+};
+
+export function useCommitmentDerivation() {
+  return useQuery<DerivationResponse>({
+    queryKey: ["commitment-derivation"],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/derive/commitments`);
+      if (!res.ok) {
+        throw new Error("Failed to fetch commitment derivation");
+      }
+      return res.json();
+    },
   });
 }
 
