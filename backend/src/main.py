@@ -1589,7 +1589,7 @@ async def add_causal_edge(payload: CausalEdgeIn, db: AsyncSession = Depends(get_
         await db.commit()
         return edge
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.delete("/causal/edges/{id}")

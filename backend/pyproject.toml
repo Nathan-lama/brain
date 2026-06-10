@@ -34,7 +34,17 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "C4", "ARG"]
-ignore = ["E501", "B008"]
+ignore = [
+    "E501",   # line-length (managed by ruff formatter)
+    "B008",   # function-call-in-default-argument (legitimate FastAPI Depends)
+    "N806",   # non-lowercase-variable-in-function (legitimate uppercase conventions for mathematical/graph variables)
+    "N803",   # invalid-argument-name (legitimate uppercase conventions for mathematical/graph arguments)
+    "N818",   # error-suffix-on-exception-name (CostInvariantViolation naming is a domain choice)
+    "ARG001", # unused-function-argument (legitimate in test fixtures and monkeypatches)
+    "ARG002", # unused-method-argument (legitimate in Mock class interface signatures)
+    "B007",   # unused-loop-control-variable (legitimate for destructuring or indexing loops)
+    "E402",   # module-import-not-at-top-of-file (legitimate for sys.path insertions in scripts and tests)
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

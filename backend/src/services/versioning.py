@@ -16,6 +16,8 @@ from src.models import (
     SchemeNode,
     SchemeType,
     SourceTargetKind,
+    SchemeStrength,
+    STRENGTH_TO_WEIGHT,
 )
 from src.services.tensions import TensionService
 
@@ -263,12 +265,30 @@ class VersioningService:
 
         # Create or update schemes
         for sid, s_data in snap_schemes.items():
+            stype = SchemeType(s_data["scheme"])
+            strength_val = s_data.get("strength")
+            if stype == SchemeType.INFERENCE:
+                if not strength_val:
+                    w = float(s_data.get("weight", 1.0))
+                    if w == 5.0:
+                        strength_val = SchemeStrength.DEDUCTIF
+                    elif w == 2.0:
+                        strength_val = SchemeStrength.DEFAISABLE_FORT
+                    else:
+                        strength_val = SchemeStrength.DEFAISABLE_FAIBLE
+                strength_val = SchemeStrength(strength_val)
+                weight_val = STRENGTH_TO_WEIGHT[strength_val]
+            else:
+                strength_val = None
+                weight_val = 1.0
+
             if sid in current_schemes:
                 # Update
                 scheme = current_schemes[sid]
                 before_dict = to_dict(scheme)
-                scheme.scheme = SchemeType(s_data["scheme"])
-                scheme.weight = float(s_data["weight"])
+                scheme.scheme = stype
+                scheme.strength = strength_val
+                scheme.weight = weight_val
                 scheme.metadata_ = s_data.get("metadata", {})
                 after_dict = to_dict(scheme)
                 await db.flush()
@@ -280,8 +300,9 @@ class VersioningService:
                 # Create
                 scheme = SchemeNode(
                     id=sid,
-                    scheme=SchemeType(s_data["scheme"]),
-                    weight=float(s_data["weight"]),
+                    scheme=stype,
+                    strength=strength_val,
+                    weight=weight_val,
                     metadata_=s_data.get("metadata", {}),
                 )
                 db.add(scheme)

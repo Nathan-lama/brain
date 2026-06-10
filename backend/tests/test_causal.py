@@ -88,7 +88,6 @@ async def test_causal_layer_endpoints_and_feedback():
                 },
             )
             assert res1.status_code == 200
-            edge1_data = res1.json()
 
             res2 = await client.post(
                 "/causal/edges",
@@ -160,10 +159,6 @@ async def test_causal_layer_endpoints_and_feedback():
                 session.add_all([other_node, conflict_scheme])
                 await session.commit()
 
-                # Link cout and other_node to the conflict scheme
-                e1 = CausalEdge(
-                    cause_id=cout_id, effect_id=conflict_scheme_id, strength=1.0
-                )  # wait, edges must be Edge type in DB
                 # Actually, conflict edges must be in edges table!
                 from src.models import Edge, EdgeRole, SourceTargetKind
 

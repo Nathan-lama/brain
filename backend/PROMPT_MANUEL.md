@@ -18,7 +18,7 @@ Votre tâche est d'analyser un texte ou une argumentation et de générer un gra
 3. INFERENCE (Soutien) : Utilisé pour l'inférence. Relie une ou plusieurs prémisses (premises) à une conclusion.
 4. CONFLIT (Contradiction) : Utilisé pour les conflits. Relie un claim attaquant (from) à un claim attaqué (to).
 5. SAUT DESCRIPTIF-NORMATIF (Pont) : Si vous passez d'une prémisse descriptive (faits) à une conclusion normative (ce qu'il faut faire), vous devez OBLIGATOIREMENT insérer un claim de type "pont_normatif" (sous forme de règle conditionnelle) qui justifie ce passage.
-6. FORCE DES INFERENCES (Strength) : Spécifiez la force logique de chaque inférence dans le champ `strength` (valeurs: 'deductif', 'defaisable_fort' ou 'defaisable_faible').
+6. FORCE DES INFERENCES (Strength) : Spécifiez la force logique de chaque inférence dans le champ `strength` (valeurs: 'deductif', 'defaisable_fort' ou 'defaisable_faible'). Il est STRICTEMENT INTERDIT de générer un champ 'weight' pour les inférences, car le poids est dérivé automatiquement par le système.
 
 ### Format JSON Attendu :
 {

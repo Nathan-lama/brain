@@ -167,7 +167,9 @@ class CoherenceSolverService:
 
         schemes_res = await db.execute(select(SchemeNode))
         scheme_nodes = schemes_res.scalars().all()
-        schemes_map = {s.id: s for s in scheme_nodes}
+        for s in scheme_nodes:
+            if s.scheme == SchemeType.INFERENCE and s.strength is None:
+                raise ValueError(f"SchemeNode {s.id} of type inference has NULL strength.")
 
         edges_res = await db.execute(select(Edge))
         edges = edges_res.scalars().all()

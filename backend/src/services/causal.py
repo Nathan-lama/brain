@@ -128,10 +128,7 @@ class CausalService:
                     # Parents exist: Noisy-OR with leak based on target's own confidence
                     k = len(parents)
                     # Get strengths for this node's parents
-                    parent_strengths = {
-                        cause_id: s
-                        for cause_id, s in incoming_strengths.get(node_id, [])
-                    }
+                    parent_strengths = dict(incoming_strengths.get(node_id, []))
 
                     values = []
                     # pgmpy order: last evidence variable changes fastest
