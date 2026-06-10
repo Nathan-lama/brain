@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ReactFlow, Controls, Background, MarkerType } from "@xyflow/react";
+import { ReactFlow, Controls, Background, MarkerType, type NodeChange } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { 
   useGraph, 
@@ -139,6 +139,20 @@ export default function GraphPage() {
   
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState<boolean>(false);
+
+  const [draggedPositions, setDraggedPositions] = useState<Record<string, { x: number; y: number }>>({});
+
+  const onNodesChange = React.useCallback((changes: NodeChange[]) => {
+    setDraggedPositions((prev) => {
+      const next = { ...prev };
+      changes.forEach((change) => {
+        if (change.type === "position" && change.position) {
+          next[change.id] = change.position;
+        }
+      });
+      return next;
+    });
+  }, []);
 
   // Click outside to close domain multi-select dropdown
   React.useEffect(() => {
@@ -489,8 +503,12 @@ export default function GraphPage() {
       const overcommitted = derivationItem?.overcommitted ?? false;
       const gap = derivationItem?.gap ?? null;
 
+      const userPos = draggedPositions[n.id];
+      const position = userPos ? userPos : n.position;
+
       return {
         ...n,
+        position,
         data: {
           ...n.data,
           coherence,
@@ -504,7 +522,7 @@ export default function GraphPage() {
         },
       };
     });
-  }, [graphData, finalVisibleNodeIds, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation]);
+  }, [graphData, finalVisibleNodeIds, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation, draggedPositions]);
 
   const cytoscapeNodes = useMemo(() => {
     if (!graphData?.nodes) return [];
@@ -615,6 +633,9 @@ export default function GraphPage() {
       const overcommitted = derivationItem?.overcommitted ?? false;
       const gap = derivationItem?.gap ?? null;
 
+      const userPos = draggedPositions[n.id];
+      const position = userPos ? userPos : { x: 20, y: 40 + index * 190 };
+
       return {
         id: n.id,
         type: "custom",
@@ -631,10 +652,10 @@ export default function GraphPage() {
         },
         parentId,
         extent: "parent" as const,
-        position: { x: 20, y: 40 + index * 190 },
+        position,
       };
     });
-  }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation, finalVisibleNodeIds]);
+  }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation, finalVisibleNodeIds, draggedPositions]);
 
   const allSocieteNodes = useMemo(() => [...domainGroups, ...societeNodes], [domainGroups, societeNodes]);
 
@@ -1327,14 +1348,20 @@ export default function GraphPage() {
                     <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-900 px-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedFilterDomains(new Set())}
+                        onClick={() => {
+                          setSelectedFilterDomains(new Set());
+                          setDraggedPositions({});
+                        }}
                         className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase transition-colors cursor-pointer"
                       >
                         Réinitialiser
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSelectedFilterDomains(new Set(allDomains))}
+                        onClick={() => {
+                          setSelectedFilterDomains(new Set(allDomains));
+                          setDraggedPositions({});
+                        }}
                         className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase transition-colors cursor-pointer"
                       >
                         Tout cocher
@@ -1360,6 +1387,7 @@ export default function GraphPage() {
                                 }
                                 return next;
                               });
+                              setDraggedPositions({});
                             }}
                             className="rounded border-slate-800 text-indigo-650 focus:ring-indigo-550 w-3.5 h-3.5 bg-slate-900"
                           />
@@ -1374,7 +1402,10 @@ export default function GraphPage() {
               {/* Type Filter */}
               <select
                 value={selectedType}
-                onChange={(e) => setSelectedType(e.target.value as NodeType | "")}
+                onChange={(e) => {
+                  setSelectedType(e.target.value as NodeType | "");
+                  setDraggedPositions({});
+                }}
                 className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none min-w-36"
               >
                 <option value="">Tous les Types</option>
@@ -1395,7 +1426,10 @@ export default function GraphPage() {
                   </span>
                   <select
                     value={focusDepth}
-                    onChange={(e) => setFocusDepth(Number(e.target.value))}
+                    onChange={(e) => {
+                      setFocusDepth(Number(e.target.value));
+                      setDraggedPositions({});
+                    }}
                     className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
                   >
                     <option value={1}>Profondeur 1 (Voisins directs)</option>
@@ -1417,6 +1451,7 @@ export default function GraphPage() {
                       setSelectedFilterDomains(new Set());
                       setFocusNodeId(null);
                       setSelectedType("");
+                      setDraggedPositions({});
                     }}
                     className="text-indigo-400 hover:text-indigo-300 font-bold uppercase text-[10px] border-l border-slate-800/80 pl-3 transition-colors cursor-pointer"
                   >
@@ -1477,12 +1512,21 @@ export default function GraphPage() {
               edges={reactFlowEdges}
               nodeTypes={nodeTypes}
               fitView
+              onNodesChange={onNodesChange}
               onNodeClick={(_, node) => {
                 if (node.type !== "domainGroup") {
                   handleNodeClick(node.id);
                 }
               }}
               onEdgeClick={(_, edge) => handleEdgeClick(edge.id)}
+              onNodeDragStop={(_, node) => {
+                if (node.type !== "domainGroup") {
+                  setDraggedPositions((prev) => ({
+                    ...prev,
+                    [node.id]: node.position,
+                  }));
+                }
+              }}
               minZoom={0.2}
               maxZoom={1.5}
             >
@@ -1497,8 +1541,15 @@ export default function GraphPage() {
               edges={reactFlowEdges}
               nodeTypes={nodeTypes}
               fitView
+              onNodesChange={onNodesChange}
               onNodeClick={(_, node) => handleNodeClick(node.id)}
               onEdgeClick={(_, edge) => handleEdgeClick(edge.id)}
+              onNodeDragStop={(_, node) => {
+                setDraggedPositions((prev) => ({
+                  ...prev,
+                  [node.id]: node.position,
+                }));
+              }}
               minZoom={0.2}
               maxZoom={1.5}
             >
@@ -1970,6 +2021,7 @@ export default function GraphPage() {
                     } else {
                       setFocusNodeId(nodeDetails.node.id);
                     }
+                    setDraggedPositions({});
                   }}
                   className={`w-full flex items-center justify-center gap-2 transition-colors ${
                     focusNodeId === nodeDetails.node.id
