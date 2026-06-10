@@ -3,18 +3,19 @@
 import React, { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
+import { NodeOut, FlatEdge } from "../../hooks/use-graph-api";
 
 if (typeof window !== "undefined") {
   try {
     cytoscape.use(dagre);
-  } catch (e) {
+  } catch {
     // Avoid double register warnings in hot reload
   }
 }
 
 interface CytoscapeGraphProps {
-  nodes: any[];
-  edges: any[];
+  nodes: (NodeOut & { isTension?: boolean })[];
+  edges: FlatEdge[];
   layoutType: string;
   onNodeClick: (nodeId: string) => void;
   onEdgeClick?: (edgeId: string) => void;
@@ -57,7 +58,7 @@ export function CytoscapeGraph({ nodes, edges, layoutType, onNodeClick, onEdgeCl
         {
           selector: "node",
           style: {
-            "background-color": (ele: any) => {
+            "background-color": (ele: cytoscape.NodeSingular) => {
               const type = ele.data("type");
               if (type === "normatif_conclusion") return "#ec4899"; // Pink
               if (type === "normatif_position") return "#a855f7"; // Purple
@@ -75,35 +76,35 @@ export function CytoscapeGraph({ nodes, edges, layoutType, onNodeClick, onEdgeCl
             "text-halign": "center",
             "text-wrap": "wrap",
             "text-max-width": "110px",
-            width: (ele: any) => (ele.data("type") === "pont_normatif" ? "64px" : "120px"),
-            height: (ele: any) => (ele.data("type") === "pont_normatif" ? "64px" : "60px"),
-            shape: (ele: any) => (ele.data("type") === "pont_normatif" ? "diamond" : "round-rectangle"),
-            "border-width": (ele: any) => ele.data("isTension") ? "3px" : "1.5px",
-            "border-color": (ele: any) => ele.data("isTension") ? "#ef4444" : "#1e293b",
+            width: (ele: cytoscape.NodeSingular) => (ele.data("type") === "pont_normatif" ? "64px" : "120px"),
+            height: (ele: cytoscape.NodeSingular) => (ele.data("type") === "pont_normatif" ? "64px" : "60px"),
+            shape: (ele: cytoscape.NodeSingular) => (ele.data("type") === "pont_normatif" ? "diamond" : "round-rectangle"),
+            "border-width": (ele: cytoscape.NodeSingular) => ele.data("isTension") ? "3px" : "1.5px",
+            "border-color": (ele: cytoscape.NodeSingular) => ele.data("isTension") ? "#ef4444" : "#1e293b",
           },
         },
         {
           selector: "edge",
           style: {
-            width: (ele: any) => {
+            width: (ele: cytoscape.EdgeSingular) => {
               const str = ele.data("strength");
               if (str === "deductif") return 4.0;
               if (str === "defaisable_fort") return 2.5;
               return 1.5;
             },
-            "line-style": (ele: any) => {
+            "line-style": (ele: cytoscape.EdgeSingular) => {
               const str = ele.data("strength");
               if (str === "defaisable_faible") return "dashed";
               return "solid";
             },
-            "line-color": (ele: any) => {
+            "line-color": (ele: cytoscape.EdgeSingular) => {
               const rel = ele.data("relation");
               if (rel === "soutient") return "#10b981";
               if (rel === "contredit") return "#ef4444";
               if (rel === "implique") return "#3b82f6";
               return "#6b7280";
             },
-            "target-arrow-color": (ele: any) => {
+            "target-arrow-color": (ele: cytoscape.EdgeSingular) => {
               const rel = ele.data("relation");
               if (rel === "soutient") return "#10b981";
               if (rel === "contredit") return "#ef4444";
@@ -135,12 +136,12 @@ export function CytoscapeGraph({ nodes, edges, layoutType, onNodeClick, onEdgeCl
 
     cyRef.current = cy;
 
-    cy.on("tap", "node", (evt: any) => {
+    cy.on("tap", "node", (evt: cytoscape.EventObject) => {
       const node = evt.target;
       onNodeClick(node.id());
     });
 
-    cy.on("tap", "edge", (evt: any) => {
+    cy.on("tap", "edge", (evt: cytoscape.EventObject) => {
       const edge = evt.target;
       onEdgeClick?.(edge.id());
     });
@@ -150,7 +151,7 @@ export function CytoscapeGraph({ nodes, edges, layoutType, onNodeClick, onEdgeCl
         cyRef.current.destroy();
       }
     };
-  }, [nodes, edges]);
+  }, [nodes, edges, onNodeClick, onEdgeClick]);
 
   useEffect(() => {
     if (!cyRef.current) return;
@@ -166,7 +167,7 @@ export function CytoscapeGraph({ nodes, edges, layoutType, onNodeClick, onEdgeCl
       edgeSep: 40,
       rankSep: 120,
       rankDir: "LR", // Left-to-Right layout fits arguments beautifully
-    } as any);
+    } as unknown as cytoscape.LayoutOptions);
     layout.run();
   }, [layoutType, nodes, edges]);
 

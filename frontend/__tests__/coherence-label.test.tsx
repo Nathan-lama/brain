@@ -1,4 +1,4 @@
-import React from "react";
+import { describe, it, expect } from "vitest";
 
 // Mock helper function representing the rendering title selection logic in page.tsx
 export function getTitleText(kind: string, cost: number): string {

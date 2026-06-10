@@ -71,7 +71,7 @@ export default function Home() {
           </h1>
           
           <p className="text-slate-400 text-base sm:text-lg max-w-xl mx-auto leading-relaxed">
-            Votre espace d'analyse sémantique et de structuration argumentative fonctionnant à 100% sur votre machine, sans aucune donnée externe.
+            Votre espace d&apos;analyse sémantique et de structuration argumentative fonctionnant à 100% sur votre machine, sans aucune donnée externe.
           </p>
         </div>
 

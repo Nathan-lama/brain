@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { ReactFlow, Controls, Background, MarkerType, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -9,15 +9,13 @@ import {
   useDeleteCausalEdge,
   useWhatIf,
   NodeOut,
-  CausalEdgeOut
+  CausalEdgeOut,
+  WhatIfResponse
 } from "@/hooks/use-graph-api";
 import { Button } from "@/components/ui/button";
 import { getTierInfo, floatToTierLabel } from "@/components/graph/custom-node";
 import {
-  Brain,
   Sliders,
-  ChevronRight,
-  Sparkles,
   Link2,
   Trash2,
   AlertTriangle,
@@ -29,8 +27,22 @@ import {
 } from "lucide-react";
 import LinkNext from "next/link";
 
+interface CustomCausalNodeData {
+  id: string;
+  text: string;
+  domain: string;
+  confidence?: number;
+  tier?: string | null;
+  weight?: number;
+  baselineCredence?: number | null;
+  intervenedCredence?: number | null;
+  interventionVal?: number;
+  setIntervention: (nodeId: string, val: number | undefined) => void;
+  metadata?: { tier?: string | null } | null;
+}
+
 // Custom Node for Causal DAG
-function CustomCausalNode({ data }: any) {
+function CustomCausalNode({ data }: { data: CustomCausalNodeData }) {
   const { text, domain, confidence, tier, weight, id, baselineCredence, intervenedCredence, interventionVal, setIntervention } = data;
   const isIntervened = interventionVal !== undefined;
 
@@ -39,8 +51,8 @@ function CustomCausalNode({ data }: any) {
   const priorTierInfo = getTierInfo(actualTier, actualWeight);
 
   const currentCred = intervenedCredence !== undefined ? intervenedCredence : (baselineCredence ?? actualWeight);
-  const currentTierLabel = floatToTierLabel(currentCred);
-  const currentTierInfo = getTierInfo(null, currentCred);
+  const currentTierLabel = floatToTierLabel(currentCred ?? 0.6);
+  const currentTierInfo = getTierInfo(null, currentCred ?? 0.6);
 
   return (
     <div className="relative group">
@@ -144,7 +156,7 @@ const nodeTypes = {
 };
 
 // Layout positioning helper
-function layoutCausalNodes(nodes: any[], edges: any[]) {
+function layoutCausalNodes(nodes: NodeOut[], edges: CausalEdgeOut[]) {
   const inDegree: Record<string, number> = {};
   nodes.forEach(n => inDegree[n.id] = 0);
   edges.forEach(e => {
@@ -153,7 +165,7 @@ function layoutCausalNodes(nodes: any[], edges: any[]) {
     }
   });
 
-  const columns: Record<number, any[]> = { 0: [], 1: [], 2: [], 3: [] };
+  const columns: Record<number, NodeOut[]> = { 0: [], 1: [], 2: [], 3: [] };
   nodes.forEach(node => {
     const deg = inDegree[node.id] || 0;
     const col = Math.min(deg, 3);
@@ -184,14 +196,14 @@ function layoutCausalNodes(nodes: any[], edges: any[]) {
 }
 
 export default function CausalPage() {
-  const { data: causalGraph, isLoading, refetch } = useCausalGraph();
+  const { data: causalGraph, isLoading } = useCausalGraph();
   const addCausalEdgeMutation = useAddCausalEdge();
   const deleteCausalEdgeMutation = useDeleteCausalEdge();
   const whatifMutation = useWhatIf();
 
   // Interventions state: Record<node_id, state_value (0 or 1)>
   const [interventions, setInterventions] = useState<Record<string, number>>({});
-  const [whatifResult, setWhatifResult] = useState<any>(null);
+  const [whatifResult, setWhatifResult] = useState<WhatIfResponse | null>(null);
 
   // Form states
   const [causeId, setCauseId] = useState<string>("");
@@ -199,15 +211,17 @@ export default function CausalPage() {
   const [strength, setStrength] = useState<number>(0.5);
   const [formError, setFormError] = useState<string>("");
 
-  const setIntervention = (nodeId: string, val: number | undefined) => {
-    const updated = { ...interventions };
-    if (val === undefined) {
-      delete updated[nodeId];
-    } else {
-      updated[nodeId] = val;
-    }
-    setInterventions(updated);
-  };
+  const setIntervention = useCallback((nodeId: string, val: number | undefined) => {
+    setInterventions((prev) => {
+      const updated = { ...prev };
+      if (val === undefined) {
+        delete updated[nodeId];
+      } else {
+        updated[nodeId] = val;
+      }
+      return updated;
+    });
+  }, []);
 
   const handleRunWhatIf = async () => {
     try {
@@ -244,8 +258,8 @@ export default function CausalPage() {
       setCauseId("");
       setEffectId("");
       setStrength(0.5);
-    } catch (err: any) {
-      setFormError(err.message || "Erreur de création de lien causal.");
+    } catch (err) {
+      setFormError((err as Error).message || "Erreur de création de lien causal.");
     }
   };
 
@@ -263,7 +277,7 @@ export default function CausalPage() {
         setIntervention
       }
     }));
-  }, [causalGraph, interventions, whatifResult]);
+  }, [causalGraph, interventions, whatifResult, setIntervention]);
 
   const reactFlowEdges = useMemo(() => {
     if (!causalGraph?.edges) return [];
@@ -331,7 +345,7 @@ export default function CausalPage() {
           <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5 animate-pulse" />
           <div>
             <span className="font-bold text-amber-400 block mb-0.5">⚠️ Avertissement Épistémique Obligatoire</span>
-            Les graphes orientés acycliques (DAG), les probabilités conditionnelles (CPD) et les forces de liaisons causales modélisés ci-dessous sont des <strong>hypothèses de travail</strong> destinées à guider le raisonnement éthique et la délibération. Ils ne sont <strong>pas</strong> issus d'études empiriques réelles ou de prédictions scientifiques. Ne prétendez jamais que ce réseau fournit des prévisions de données empiriques réelles.
+            Les graphes orientés acycliques (DAG), les probabilités conditionnelles (CPD) et les forces de liaisons causales modélisés ci-dessous sont des <strong>hypothèses de travail</strong> destinées à guider le raisonnement éthique et la délibération. Ils ne sont <strong>pas</strong> issus d&apos;études empiriques réelles ou de prédictions scientifiques. Ne prétendez jamais que ce réseau fournit des prévisions de données empiriques réelles.
           </div>
         </div>
       </section>
@@ -350,7 +364,7 @@ export default function CausalPage() {
             <Info className="w-8 h-8 text-slate-600 mb-1" />
             <span className="font-semibold text-sm">Aucun nœud empirique trouvé.</span>
             <span className="text-xs">
-              Pour peupler ce réseau bayésien, créez des claims de type <strong>Empirique</strong> dans l'Éditeur de Graphe principal.
+              Pour peupler ce réseau bayésien, créez des claims de type <strong>Empirique</strong> dans l&apos;Éditeur de Graphe principal.
             </span>
           </div>
         ) : (
@@ -470,7 +484,7 @@ export default function CausalPage() {
                       onChange={e => setEffectId(e.target.value)}
                       className="w-full bg-slate-900 border border-slate-800 text-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
                     >
-                      <option value="">Sélectionner l'effet...</option>
+                      <option value="">Sélectionner l&apos;effet...</option>
                       {causalGraph.nodes.map(n => (
                         <option key={n.id} value={n.id}>{n.text.substring(0, 48)}...</option>
                       ))}

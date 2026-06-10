@@ -22,7 +22,6 @@ import {
   useSolve,
   useSolveAlternatives,
   SolveResponse,
-  AlternativeSolutionOut,
   useDomains,
   useCreateDomain,
   useUpdateDomain,
@@ -36,8 +35,10 @@ import {
   SchemeStrength,
   useHumeValidation,
   useCommitmentDerivation,
+  RelatedNodeResponse,
+  NodeNeighbor,
 } from "@/hooks/use-graph-api";
-import { CustomGraphNode, CustomDomainGroupNode, getTierInfo, floatToTierLabel } from "@/components/graph/custom-node";
+import { CustomGraphNode, CustomDomainGroupNode, getTierInfo } from "@/components/graph/custom-node";
 import { CytoscapeGraph } from "@/components/graph/cytoscape-graph";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,7 +59,6 @@ import {
   ArrowLeft,
   Info,
   AlertTriangle,
-  GitCommit,
   Plus,
   RefreshCw,
   Zap,
@@ -75,7 +75,7 @@ const nodeTypes = {
 };
 
 // Layout positioning helper for React Flow
-function layoutReactFlowNodes(nodes: any[]) {
+function layoutReactFlowNodes(nodes: NodeOut[]) {
   const columns: Record<string, number> = {
     descriptif: 0,
     empirique: 0,
@@ -89,7 +89,7 @@ function layoutReactFlowNodes(nodes: any[]) {
   const rowHeight = 200;
 
   // Group nodes by their assigned column
-  const groups: Record<number, any[]> = { 0: [], 1: [], 2: [] };
+  const groups: Record<number, NodeOut[]> = { 0: [], 1: [], 2: [] };
   nodes.forEach((node) => {
     const col = columns[node.type] ?? 0;
     groups[col].push(node);
@@ -161,6 +161,9 @@ export default function GraphPage() {
     selectedType || undefined
   );
 
+  // Snapshot comparison diff hook
+  const { data: snapshotDiff, isLoading: snapshotDiffLoading } = useSnapshotDiff(compareFromId, compareToId);
+
   // 1b. Tensions detection states & hooks
   const [tensionsPanelOpen, setTensionsPanelOpen] = useState<boolean>(false);
   const [resolveDialogOpen, setResolveDialogOpen] = useState<boolean>(false);
@@ -217,7 +220,7 @@ export default function GraphPage() {
         }
       }
     });
-  }, [graphData, isCoherenceActive]);
+  }, [graphData, isCoherenceActive, solveMutation, refetchAlternatives]);
 
   const activeViolatedConstraints = useMemo(() => {
     if (!isCoherenceActive) return [];
@@ -466,7 +469,15 @@ export default function GraphPage() {
     if (!graphData?.nodes || !domains) return [];
     const uniqueDomains = Array.from(new Set(graphData.nodes.map((n) => n.domain)));
 
-    const groups: any[] = [];
+    interface DomainGroupNode {
+      id: string;
+      type: string;
+      data: { label: string };
+      position: { x: number; y: number };
+      style: { width: number; height: number };
+    }
+
+    const groups: DomainGroupNode[] = [];
     uniqueDomains.forEach((domName, domIdx) => {
       const domNodes = graphData.nodes.filter((n) => n.domain === domName);
       if (domNodes.length === 0) return;
@@ -558,8 +569,8 @@ export default function GraphPage() {
         await deleteNodeMutation.mutateAsync(nodeId);
         setPanelOpen(false);
         setSelectedNodeId(null);
-      } catch (err: any) {
-        alert("Erreur lors de la suppression de la thèse : " + err.message);
+      } catch (err) {
+        alert("Erreur lors de la suppression de la thèse : " + (err as Error).message);
       }
     }
   };
@@ -570,8 +581,8 @@ export default function GraphPage() {
         await deleteEdgeMutation.mutateAsync(schemeId);
         setEdgePanelOpen(false);
         setSelectedEdgeId(null);
-      } catch (err: any) {
-        alert("Erreur lors de la suppression de la relation : " + err.message);
+      } catch (err) {
+        alert("Erreur lors de la suppression de la relation : " + (err as Error).message);
       }
     }
   };
@@ -579,8 +590,8 @@ export default function GraphPage() {
   const handleUpdateSchemeStrength = async (schemeId: string, strength: SchemeStrength) => {
     try {
       await updateSchemeNodeMutation.mutateAsync({ id: schemeId, payload: { strength } });
-    } catch (err: any) {
-      alert("Erreur lors de la modification de la force de l'inférence : " + err.message);
+    } catch (err) {
+      alert("Erreur lors de la modification de la force de l'inférence : " + (err as Error).message);
     }
   };
 
@@ -599,7 +610,7 @@ export default function GraphPage() {
               📸 Belief Snapshots
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Enregistrez l'état actuel de votre Second Brain pour pouvoir le comparer ou y revenir à tout moment.
+              Enregistrez l&apos;état actuel de votre Second Brain pour pouvoir le comparer ou y revenir à tout moment.
             </p>
             
             {/* Create Snapshot Form */}
@@ -736,7 +747,7 @@ export default function GraphPage() {
         <div className="lg:col-span-7 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="font-heading font-bold text-base text-slate-100 flex items-center gap-2">
-              📜 Journal d'Événements (Git-like)
+              📜 Journal d&apos;Événements (Git-like)
             </h3>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
               Append-Only
@@ -750,12 +761,12 @@ export default function GraphPage() {
                 <span>Chargement des événements...</span>
               </div>
             ) : !events || events.length === 0 ? (
-              <p className="text-xs text-slate-500 italic py-4">Aucun événement loggé dans l'historique.</p>
+              <p className="text-xs text-slate-500 italic py-4">Aucun événement loggé dans l&apos;historique.</p>
             ) : (
               <div className="relative border-l border-slate-800/80 ml-3 pl-6 space-y-5">
                 {events.map((event) => {
                   let opColor = "text-indigo-400 bg-indigo-950/40 border-indigo-900/30";
-                  let opText = event.op.toUpperCase();
+                  const opText = event.op.toUpperCase();
                   if (event.op === "create") {
                     opColor = "text-emerald-400 bg-emerald-950/40 border-emerald-900/30";
                   } else if (event.op === "delete") {
@@ -807,8 +818,8 @@ export default function GraphPage() {
                               )}
                               {event.before.text !== event.after.text && (
                                 <div>
-                                  <span className="text-rose-400 font-semibold block truncate">- Texte: "{event.before.text}"</span>
-                                  <span className="text-emerald-400 font-semibold block truncate">+ Texte: "{event.after.text}"</span>
+                                  <span className="text-rose-400 font-semibold block truncate">- Texte: &quot;{event.before.text}&quot;</span>
+                                  <span className="text-emerald-400 font-semibold block truncate">+ Texte: &quot;{event.after.text}&quot;</span>
                                 </div>
                               )}
                             </div>
@@ -828,7 +839,8 @@ export default function GraphPage() {
 
   // Snapshot Diff Component (embedded inside page.tsx or as modal)
   const renderSnapshotDiffModal = () => {
-    const { data: diff, isLoading } = useSnapshotDiff(compareFromId, compareToId);
+    const diff = snapshotDiff;
+    const isLoading = snapshotDiffLoading;
 
     if (!comparisonDialogOpen) return null;
 
@@ -1682,7 +1694,7 @@ export default function GraphPage() {
                       }}
                       className="w-full bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 hover:border-indigo-500/40 rounded-lg text-xs py-1.5 transition-colors cursor-pointer h-8"
                     >
-                      Choisir d'accepter cette thèse
+                      Choisir d&apos;accepter cette thèse
                     </Button>
                   </div>
                 )}
@@ -1697,7 +1709,7 @@ export default function GraphPage() {
                     <p className="text-slate-500 text-xs">Aucune liaison directe pour ce claim.</p>
                   ) : (
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {nodeDetails.neighbors.map((nb: any, idx: number) => {
+                      {nodeDetails.neighbors.map((nb: NodeNeighbor, idx: number) => {
                         const relColor =
                           RELATION_COLORS[nb.relation as keyof typeof RELATION_COLORS] ||
                           RELATION_COLORS.presuppose;
@@ -1750,7 +1762,7 @@ export default function GraphPage() {
                     <p className="text-slate-500 text-xs">Aucune suggestion sémantique disponible.</p>
                   ) : (
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {relatedClaims.map((rc: any) => (
+                      {relatedClaims.map((rc: RelatedNodeResponse) => (
                         <div
                           key={rc.node.id}
                           onClick={() => handleSuggestionClick(rc.node.id)}
@@ -1808,10 +1820,10 @@ export default function GraphPage() {
             <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5 relative">
               <div>
                 <h4 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                  ⚖️ Choix d'Arbitrage alternatif
+                  ⚖️ Choix d&apos;Arbitrage alternatif
                 </h4>
                 <p className="text-slate-400 text-xs mt-1">
-                  Analyse des répercussions logiques si vous choisissez d'accepter cette thèse.
+                  Analyse des répercussions logiques si vous choisissez d&apos;accepter cette thèse.
                 </p>
               </div>
 
@@ -1819,14 +1831,14 @@ export default function GraphPage() {
                 <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-900 text-xs space-y-2">
                   <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider block">Thèse à intégrer :</span>
                   <p className="text-slate-200 font-semibold leading-relaxed">
-                    "{arbitrageNode.text}"
+                    &quot;{arbitrageNode.text}&quot;
                   </p>
                 </div>
 
                 {matchingAlt ? (
                   <div className="space-y-3">
                     <p className="text-xs text-slate-300 leading-relaxed">
-                      Tu peux choisir d'accepter cette thèse. Cependant, pour maintenir la cohérence, **il faudra lâcher :**
+                      Tu peux choisir d&apos;accepter cette thèse. Cependant, pour maintenir la cohérence, **il faudra lâcher :**
                     </p>
                     <div className="p-3.5 rounded-xl bg-red-950/10 border border-red-500/20 space-y-2 max-h-36 overflow-y-auto">
                       {claimsToDrop.map((c) => (
@@ -1851,7 +1863,7 @@ export default function GraphPage() {
                 ) : (
                   <div className="space-y-3 text-xs text-slate-400 leading-relaxed bg-slate-950/40 p-3.5 rounded-xl border border-slate-900">
                     <p>
-                      Aucune des solutions alternatives optimales calculées ne permet d'accepter cette thèse directement.
+                      Aucune des solutions alternatives optimales calculées ne permet d&apos;accepter cette thèse directement.
                     </p>
                     <p className="font-semibold text-indigo-400 mt-2">
                       💡 Astuce :
@@ -1931,7 +1943,7 @@ export default function GraphPage() {
                 {selectedEdge.relation === "soutient" && (
                   <div className="space-y-2">
                     <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                      Force de l'Inférence (Poids de Schéma)
+                      Force de l&apos;Inférence (Poids de Schéma)
                     </h4>
                     <select
                       value={selectedEdge.strength || "defaisable_faible"}
@@ -2033,7 +2045,7 @@ export default function GraphPage() {
               <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
                 <Info className="w-8 h-8 text-slate-600 mb-2" />
                 <p className="font-semibold text-sm">Graphe Cohérent !</p>
-                <p className="text-xs max-w-[240px] mt-1">Aucune tension ou cycle contradictoire n'a été détecté dans la base.</p>
+                <p className="text-xs max-w-[240px] mt-1">Aucune tension ou cycle contradictoire n&apos;a été détecté dans la base.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -2188,9 +2200,9 @@ export default function GraphPage() {
                 disabled={resolveTensionMutation.isPending}
                 className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-slate-950/30 hover:bg-slate-950/60 hover:border-indigo-500/50 transition-all cursor-pointer group"
               >
-                <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wide mb-1">Réviser l'Assertion A</div>
+                <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wide mb-1">Réviser l&apos;Assertion A</div>
                 <div className="text-xs font-semibold text-slate-200 line-clamp-2 leading-relaxed group-hover:text-white">
-                  "{resolvingTension.claims[0].text}"
+                  &quot;{resolvingTension.claims[0].text}&quot;
                 </div>
               </button>
 
@@ -2213,9 +2225,9 @@ export default function GraphPage() {
                   disabled={resolveTensionMutation.isPending}
                   className="w-full text-left p-3.5 rounded-xl border border-slate-800 bg-slate-950/30 hover:bg-slate-950/60 hover:border-indigo-500/50 transition-all cursor-pointer group"
                 >
-                  <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wide mb-1">Réviser l'Assertion B</div>
+                  <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wide mb-1">Réviser l&apos;Assertion B</div>
                   <div className="text-xs font-semibold text-slate-200 line-clamp-2 leading-relaxed group-hover:text-white">
-                    "{resolvingTension.claims[1].text}"
+                    &quot;{resolvingTension.claims[1].text}&quot;
                   </div>
                 </button>
               )}
@@ -2242,7 +2254,7 @@ export default function GraphPage() {
                 >
                   <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wide mb-1">Rejeter la Prémisse-Pont</div>
                   <div className="text-xs font-semibold text-amber-200 line-clamp-2 leading-relaxed group-hover:text-white">
-                    "{pont.text}"
+                    &quot;{pont.text}&quot;
                   </div>
                 </button>
               ))}
@@ -2268,7 +2280,7 @@ export default function GraphPage() {
                 >
                   <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wide mb-1">Accepter comme Paradoxe Assumé</div>
                   <div className="text-xs text-slate-300 group-hover:text-white leading-relaxed">
-                    Taguer cette contradiction en base de données et la masquer du statut d'alerte.
+                    Taguer cette contradiction en base de données et la masquer du statut d&apos;alerte.
                   </div>
                 </button>
               )}
@@ -2299,7 +2311,7 @@ export default function GraphPage() {
                 ⚖️ Ce qui a bougé (Ajustement Réalisé)
               </h4>
               <p className="text-slate-400 text-xs mt-1">
-                La base de croyances s'est réorganisée pour restaurer la cohérence logique. Voici l'impact de votre décision :
+                La base de croyances s&apos;est réorganisée pour restaurer la cohérence logique. Voici l&apos;impact de votre décision :
               </p>
             </div>
 
@@ -2669,13 +2681,13 @@ export default function GraphPage() {
                     alert("Importation réussie avec succès !");
                     setImportPayloadText("");
                     setImportExportDialogOpen(false);
-                  } catch (e: any) {
-                    setImportError(e.message || "JSON Invalide");
+                  } catch (e) {
+                    setImportError((e as Error).message || "JSON Invalide");
                   }
                 }}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold px-4 cursor-pointer h-9 flex items-center justify-center gap-1.5"
               >
-                <span>Lancer l'Importation</span>
+                <span>Lancer l&apos;Importation</span>
               </Button>
             </div>
 

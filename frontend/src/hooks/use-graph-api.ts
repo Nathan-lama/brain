@@ -13,7 +13,7 @@ export type SchemeNodeOut = {
   scheme: "inference" | "conflit" | "preference";
   weight: number;
   strength?: SchemeStrength | null;
-  metadata?: Record<string, any> | null;
+  metadata?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -35,6 +35,7 @@ export type GraphResponse = {
 
 export type NodeDetailResponse = components["schemas"]["NodeDetailResponse"];
 export type RelatedNodeResponse = components["schemas"]["RelatedNodeResponse"];
+export type NodeNeighbor = components["schemas"]["NodeNeighbor"];
 
 export function useGraph(domain?: string, type?: NodeType | "") {
   return useQuery<GraphResponse>({
@@ -122,13 +123,27 @@ export type TensionDiffOut = {
   claims_affectes: NodeOut[];
 };
 
+export type EventPayload = {
+  text?: string | null;
+  scheme?: string | null;
+  role?: string | null;
+  tier?: string | null;
+  confidence?: number | null;
+  weight?: number | null;
+  metadata?: {
+    paradoxe_assume?: boolean;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+};
+
 export type EventOut = {
   id: string;
   entity_type: string;
   entity_id: string;
   op: "create" | "update" | "delete";
-  before: any | null;
-  after: any | null;
+  before: EventPayload | null;
+  after: EventPayload | null;
   created_at: string;
 };
 
@@ -136,15 +151,15 @@ export type SnapshotOut = {
   id: string;
   label: string;
   created_at: string;
-  payload: any;
+  payload: unknown;
 };
 
 export type SnapshotDiffOut = {
   claims_ajoutes: NodeOut[];
   claims_supprimes: NodeOut[];
   claims_modifies: NodeOut[];
-  edges_ajoutes: any[];
-  edges_supprimes: any[];
+  edges_ajoutes: FlatEdge[];
+  edges_supprimes: FlatEdge[];
   tensions_resolues: TensionOut[];
   tensions_nouvelles: TensionOut[];
 };
@@ -296,7 +311,6 @@ export type SolveResponse = SolverConfiguration;
 export type AlternativeSolutionOut = SolverConfiguration;
 
 export function useSolve() {
-  const queryClient = useQueryClient();
   return useMutation<SolveResponse, Error, void>({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE}/solve`, {

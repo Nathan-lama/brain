@@ -75,7 +75,26 @@ export const floatToTierLabel = (val: number) => {
   return "Spéculatif";
 };
 
-export function CustomGraphNode({ data, selected }: any) {
+export interface CustomGraphNodeData {
+  text: string;
+  type: string;
+  domain: string;
+  confidence?: number;
+  tier?: string | null;
+  weight?: number;
+  isTension?: boolean;
+  isCoherenceActive?: boolean;
+  isAccepted?: boolean;
+  isRejected?: boolean;
+  isDiff?: boolean;
+  coherence?: string;
+  correspondence?: number | null;
+  overcommitted?: boolean;
+  gap?: number | null;
+  metadata?: { tier?: string | null } | null;
+}
+
+export function CustomGraphNode({ data, selected }: { data: CustomGraphNodeData; selected?: boolean }) {
   const { text, type, domain, confidence, tier, weight, isTension, isCoherenceActive, isAccepted, isRejected, isDiff, coherence, correspondence, overcommitted, gap } = data;
   const colors = TYPE_COLORS[type] || TYPE_COLORS.descriptif;
   
@@ -331,7 +350,7 @@ export function CustomGraphNode({ data, selected }: any) {
 }
 
 
-export function CustomDomainGroupNode({ data }: any) {
+export function CustomDomainGroupNode({ data }: { data: { label: string } }) {
   const { label } = data;
   return (
     <div className="w-full h-full border border-dashed border-slate-750/50 bg-slate-900/10 backdrop-blur-md rounded-2xl p-4 pointer-events-none">
