@@ -7,6 +7,7 @@ from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import (
+    STRENGTH_TO_WEIGHT,
     BeliefSnapshot,
     Edge,
     EdgeRole,
@@ -14,10 +15,9 @@ from src.models import (
     Node,
     NodeType,
     SchemeNode,
+    SchemeStrength,
     SchemeType,
     SourceTargetKind,
-    SchemeStrength,
-    STRENGTH_TO_WEIGHT,
 )
 from src.services.tensions import TensionService
 
