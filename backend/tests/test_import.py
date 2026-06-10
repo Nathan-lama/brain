@@ -133,3 +133,79 @@ async def test_import_and_deduplication():
     finally:
         app.dependency_overrides.clear()
         await test_engine.dispose()
+
+
+async def test_import_legacy_fallback_warning():
+    test_engine = create_async_engine(DATABASE_URL, echo=False)
+    test_session_local = async_sessionmaker(
+        test_engine, expire_on_commit=False, class_=AsyncSession
+    )
+
+    async def override_get_db():
+        async with test_session_local() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Clear database for test isolation
+    async with test_session_local() as session:
+        await session.execute(delete(Edge))
+        await session.execute(delete(SchemeNode))
+        await session.execute(delete(Node))
+        await session.execute(delete(BeliefSnapshot))
+        await session.commit()
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            payload = {
+                "nodes": [
+                    {
+                        "id": "node_p",
+                        "type": "descriptif",
+                        "domain": "test",
+                        "text": "Premise Node"
+                    },
+                    {
+                        "id": "node_c",
+                        "type": "descriptif",
+                        "domain": "test",
+                        "text": "Conclusion Node"
+                    }
+                ],
+                "scheme_nodes": [
+                    {
+                        "id": "ra_test",
+                        "scheme": "inference",
+                        "premises": ["node_p"],
+                        "conclusion": "node_c",
+                        "weight": 5.0
+                    }
+                ]
+            }
+
+            res = await client.post("/import?dedup=false", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+
+            # Assert warning is present in response
+            assert "warnings" in data, "No warnings dictionary in import response"
+            warnings_list = data["warnings"].get("legacy_fallbacks", [])
+            assert any(
+                "ra_test" in w and "5.0" in w and "deductif" in w
+                for w in warnings_list
+            ), f"Expected legacy fallback warning not found in: {warnings_list}"
+
+            # Assert database state has inferred strength
+            from src.main import resolve_uuid
+            scheme_uuid = resolve_uuid("ra_test")
+            async with test_session_local() as session:
+                scheme_res = await session.execute(select(SchemeNode).filter(SchemeNode.id == scheme_uuid))
+                scheme = scheme_res.scalar_one_or_none()
+                assert scheme is not None
+                assert scheme.strength.value == "deductif"
+
+    finally:
+        app.dependency_overrides.clear()
+        await test_engine.dispose()
+

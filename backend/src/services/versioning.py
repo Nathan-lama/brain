@@ -1,7 +1,11 @@
 import enum
+import logging
 import uuid
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
 
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -136,8 +140,10 @@ class VersioningService:
         }
 
     @staticmethod
-    async def restore_snapshot(db: AsyncSession, snapshot: BeliefSnapshot) -> None:
+    async def restore_snapshot(db: AsyncSession, snapshot: BeliefSnapshot) -> list[str]:
         payload = snapshot.payload
+        warnings = []
+
 
         # 1. Restore Nodes
         nodes_res = await db.execute(select(Node))
@@ -276,6 +282,9 @@ class VersioningService:
                         strength_val = SchemeStrength.DEFAISABLE_FORT
                     else:
                         strength_val = SchemeStrength.DEFAISABLE_FAIBLE
+                    msg = f"fallback legacy: scheme '{sid}' sans strength, inféré {strength_val.value} depuis weight={w}"
+                    logger.warning(msg)
+                    warnings.append(msg)
                 strength_val = SchemeStrength(strength_val)
                 weight_val = STRENGTH_TO_WEIGHT[strength_val]
             else:
@@ -361,3 +370,4 @@ class VersioningService:
                 )
 
         await db.commit()
+        return warnings

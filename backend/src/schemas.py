@@ -181,6 +181,8 @@ class ImportSchemeInference(BaseModel):
     premises: list[str]
     conclusion: str
     strength: SchemeStrength | None = None
+    weight: float | None = None
+
 
 
 class ImportSchemeConflit(BaseModel):

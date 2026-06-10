@@ -1,6 +1,10 @@
+import logging
 import uuid
 from typing import Any
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
+
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -260,6 +264,7 @@ async def import_graph(
     allow_hume_violations: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
+    legacy_warnings = []
     violations = await validate_import_hume(
         payload, is_sadface=False, dedup=dedup, db=db
     )
@@ -391,7 +396,21 @@ async def import_graph(
         strength_val = getattr(snode, "strength", None)
         if snode.scheme == SchemeType.INFERENCE:
             if not strength_val:
-                strength_val = SchemeStrength.DEFAISABLE_FAIBLE
+                weight_val = getattr(snode, "weight", None)
+                if weight_val is not None:
+                    w = float(weight_val)
+                    if w == 5.0:
+                        strength_val = SchemeStrength.DEDUCTIF
+                    elif w == 2.0:
+                        strength_val = SchemeStrength.DEFAISABLE_FORT
+                    else:
+                        strength_val = SchemeStrength.DEFAISABLE_FAIBLE
+                else:
+                    weight_val = 1.0
+                    strength_val = SchemeStrength.DEFAISABLE_FAIBLE
+                msg = f"fallback legacy: scheme '{snode.id}' sans strength, inféré {strength_val.value} depuis weight={weight_val}"
+                logger.warning(msg)
+                legacy_warnings.append(msg)
             weight_val = STRENGTH_TO_WEIGHT[strength_val]
         else:
             strength_val = None
@@ -526,10 +545,13 @@ async def import_graph(
         "nodes_merged": merged_count,
         "schemes_created_or_updated": scheme_count,
     }
+    warnings_dict = {}
     if violations:
-        response_data["warnings"] = {
-            "hume_violations": [v.model_dump(mode="json") for v in violations]
-        }
+        warnings_dict["hume_violations"] = [v.model_dump(mode="json") for v in violations]
+    if legacy_warnings:
+        warnings_dict["legacy_fallbacks"] = legacy_warnings
+    if warnings_dict:
+        response_data["warnings"] = warnings_dict
     return response_data
 
 
