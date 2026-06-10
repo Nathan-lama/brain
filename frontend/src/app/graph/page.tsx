@@ -38,6 +38,7 @@ import {
   RelatedNodeResponse,
   NodeNeighbor,
 } from "@/hooks/use-graph-api";
+import { filterGraph } from "@/lib/graph-filter";
 import { CustomGraphNode, CustomDomainGroupNode, getTierInfo } from "@/components/graph/custom-node";
 import { CytoscapeGraph } from "@/components/graph/cytoscape-graph";
 import { Button } from "@/components/ui/button";
@@ -127,10 +128,28 @@ export default function GraphPage() {
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<"edition" | "exploration">("edition");
   const [cytoscapeLayout, setCytoscapeLayout] = useState<string>("dagre");
-  const [selectedDomain, setSelectedDomain] = useState<string>("");
+  
+  // Client-side filtering states
+  const [selectedFilterDomains, setSelectedFilterDomains] = useState<Set<string>>(new Set());
   const [selectedType, setSelectedType] = useState<NodeType | "">("");
+  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
+  const [focusDepth, setFocusDepth] = useState<number>(1);
+  const [domainDropdownOpen, setDomainDropdownOpen] = useState<boolean>(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+  
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState<boolean>(false);
+
+  // Click outside to close domain multi-select dropdown
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setDomainDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Selected edge/relation state
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -155,11 +174,8 @@ export default function GraphPage() {
   // Create Snapshot label input
   const [newSnapshotLabel, setNewSnapshotLabel] = useState<string>("");
 
-  // 1. Fetch graph data with current filters
-  const { data: graphData, isLoading: graphLoading } = useGraph(
-    selectedDomain || undefined,
-    selectedType || undefined
-  );
+  // 1. Fetch all graph data for client-side filtering
+  const { data: graphData, isLoading: graphLoading } = useGraph();
 
   // Snapshot comparison diff hook
   const { data: snapshotDiff, isLoading: snapshotDiffLoading } = useSnapshotDiff(compareFromId, compareToId);
@@ -349,10 +365,65 @@ export default function GraphPage() {
     return Array.from(new Set(graphData.nodes.map((n) => n.domain)));
   }, [graphData]);
 
-  // Map backend edges to React Flow elements
+  // Execute client-side filtering logic
+  const filteredResult = useMemo(() => {
+    if (!graphData?.nodes || !graphData?.edges) {
+      return {
+        visibleNodeIds: new Set<string>(),
+        visibleSchemeIds: new Set<string>(),
+      };
+    }
+    return filterGraph(graphData.nodes, graphData.edges, {
+      selectedDomains: selectedFilterDomains,
+      focusNodeId,
+      focusDepth,
+    });
+  }, [graphData, selectedFilterDomains, focusNodeId, focusDepth]);
+
+  const { visibleNodeIds, visibleSchemeIds } = filteredResult;
+
+  // Apply optional client-side type filter
+  const finalVisibleNodeIds = useMemo(() => {
+    if (!selectedType) return visibleNodeIds;
+    const result = new Set<string>();
+    if (graphData?.nodes) {
+      for (const node of graphData.nodes) {
+        if (visibleNodeIds.has(node.id) && node.type === selectedType) {
+          result.add(node.id);
+        }
+      }
+    }
+    return result;
+  }, [visibleNodeIds, selectedType, graphData]);
+
+  // Extract all unique schemes and compute hidden count
+  const allSchemes = useMemo(() => {
+    const set = new Set<string>();
+    if (graphData?.edges) {
+      for (const e of graphData.edges) {
+        set.add(e.scheme_id);
+      }
+    }
+    return set;
+  }, [graphData]);
+
+  const hiddenCount = useMemo(() => {
+    if (!graphData) return 0;
+    const hiddenNodes = graphData.nodes.length - finalVisibleNodeIds.size;
+    const hiddenSchemes = allSchemes.size - visibleSchemeIds.size;
+    return hiddenNodes + hiddenSchemes;
+  }, [graphData, finalVisibleNodeIds, visibleSchemeIds, allSchemes]);
+
+  // Map backend edges to React Flow elements (filtered)
   const reactFlowEdges = useMemo(() => {
     if (!graphData?.edges) return [];
-    return graphData.edges.map((e) => {
+    const visibleEdges = graphData.edges.filter(
+      (e) =>
+        finalVisibleNodeIds.has(e.source) &&
+        finalVisibleNodeIds.has(e.target) &&
+        visibleSchemeIds.has(e.scheme_id)
+    );
+    return visibleEdges.map((e) => {
       const color =
         RELATION_COLORS[e.relation as keyof typeof RELATION_COLORS] || RELATION_COLORS.presuppose;
       
@@ -368,7 +439,6 @@ export default function GraphPage() {
           strokeWidth = 1.5;
           strokeDasharray = "5 5";
         } else {
-          // fallback
           strokeWidth = 1.5;
           strokeDasharray = "5 5";
         }
@@ -392,12 +462,13 @@ export default function GraphPage() {
         },
       };
     });
-  }, [graphData]);
+  }, [graphData, finalVisibleNodeIds, visibleSchemeIds]);
 
-  // Layout and map backend nodes for React Flow
+  // Layout and map backend nodes for React Flow (filtered)
   const reactFlowNodes = useMemo(() => {
     if (!graphData?.nodes) return [];
-    const laidOut = layoutReactFlowNodes(graphData.nodes);
+    const visibleNodesList = graphData.nodes.filter(n => finalVisibleNodeIds.has(n.id));
+    const laidOut = layoutReactFlowNodes(visibleNodesList);
     return laidOut.map((n) => {
       const isAccepted = currentAcceptedIds.has(n.id);
       const isRejected = currentRejectedIds.has(n.id);
@@ -433,11 +504,12 @@ export default function GraphPage() {
         },
       };
     });
-  }, [graphData, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation]);
+  }, [graphData, finalVisibleNodeIds, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation]);
 
   const cytoscapeNodes = useMemo(() => {
     if (!graphData?.nodes) return [];
-    return graphData.nodes.map((n) => {
+    const visibleNodesList = graphData.nodes.filter(n => finalVisibleNodeIds.has(n.id));
+    return visibleNodesList.map((n) => {
       const isAccepted = currentAcceptedIds.has(n.id);
       const isRejected = currentRejectedIds.has(n.id);
       const isTension = tensionNodeIds.has(n.id);
@@ -463,12 +535,23 @@ export default function GraphPage() {
         isDiff: currentDiffIds.has(n.id),
       };
     });
-  }, [graphData, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds]);
+  }, [graphData, finalVisibleNodeIds, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds]);
 
-  // Layout and group nodes for the "Société" tab (parent/child group nodes)
+  const cytoscapeEdges = useMemo(() => {
+    if (!graphData?.edges) return [];
+    return graphData.edges.filter(
+      (e) =>
+        finalVisibleNodeIds.has(e.source) &&
+        finalVisibleNodeIds.has(e.target) &&
+        visibleSchemeIds.has(e.scheme_id)
+    );
+  }, [graphData, finalVisibleNodeIds, visibleSchemeIds]);
+
+  // Layout and group nodes for the "Société" tab (parent/child group nodes) (filtered)
   const domainGroups = useMemo(() => {
     if (!graphData?.nodes || !domains) return [];
-    const uniqueDomains = Array.from(new Set(graphData.nodes.map((n) => n.domain)));
+    const visibleNodesList = graphData.nodes.filter(n => finalVisibleNodeIds.has(n.id));
+    const uniqueDomains = Array.from(new Set(visibleNodesList.map((n) => n.domain)));
 
     interface DomainGroupNode {
       id: string;
@@ -480,7 +563,7 @@ export default function GraphPage() {
 
     const groups: DomainGroupNode[] = [];
     uniqueDomains.forEach((domName, domIdx) => {
-      const domNodes = graphData.nodes.filter((n) => n.domain === domName);
+      const domNodes = visibleNodesList.filter((n) => n.domain === domName);
       if (domNodes.length === 0) return;
 
       const domObj = domains.find((d) => d.name === domName);
@@ -501,15 +584,16 @@ export default function GraphPage() {
       });
     });
     return groups;
-  }, [graphData, domains]);
+  }, [graphData, domains, finalVisibleNodeIds]);
 
   const societeNodes = useMemo(() => {
     if (!graphData?.nodes || !domains) return [];
-    return graphData.nodes.map((n) => {
+    const visibleNodesList = graphData.nodes.filter(n => finalVisibleNodeIds.has(n.id));
+    return visibleNodesList.map((n) => {
       const domObj = domains.find((d) => d.name === n.domain);
       const parentId = domObj?.id || n.domain;
 
-      const domNodes = graphData.nodes.filter((dn) => dn.domain === n.domain);
+      const domNodes = visibleNodesList.filter((dn) => dn.domain === n.domain);
       const index = domNodes.findIndex((dn) => dn.id === n.id);
 
       const isAccepted = currentAcceptedIds.has(n.id);
@@ -550,7 +634,7 @@ export default function GraphPage() {
         position: { x: 20, y: 40 + index * 190 },
       };
     });
-  }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation]);
+  }, [graphData, domains, tensionNodeIds, isCoherenceActive, currentAcceptedIds, currentRejectedIds, currentDiffIds, commitmentDerivation, finalVisibleNodeIds]);
 
   const allSocieteNodes = useMemo(() => [...domainGroups, ...societeNodes], [domainGroups, societeNodes]);
 
@@ -1224,18 +1308,68 @@ export default function GraphPage() {
               </div>
 
               {/* Domain Filter */}
-              <select
-                value={selectedDomain}
-                onChange={(e) => setSelectedDomain(e.target.value)}
-                className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none min-w-36"
-              >
-                <option value="">Tous les Domaines</option>
-                {allDomains.map((dom) => (
-                  <option key={dom} value={dom}>
-                    {dom.charAt(0).toUpperCase() + dom.slice(1)}
-                  </option>
-                ))}
-              </select>
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setDomainDropdownOpen(!domainDropdownOpen)}
+                  className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none min-w-36 text-left flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-850 hover:border-slate-700 transition-all"
+                >
+                  <span>
+                    {selectedFilterDomains.size === 0
+                      ? "Tous les domaines"
+                      : `${selectedFilterDomains.size} domaine(s)`}
+                  </span>
+                  <span className="text-slate-500 text-[10px]">▼</span>
+                </button>
+
+                {domainDropdownOpen && (
+                  <div className="absolute left-0 mt-1.5 w-56 rounded-xl border border-slate-800 bg-slate-950/95 backdrop-blur-md p-2 shadow-2xl z-50 max-h-60 overflow-y-auto space-y-1">
+                    <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-900 px-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFilterDomains(new Set())}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase transition-colors cursor-pointer"
+                      >
+                        Réinitialiser
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFilterDomains(new Set(allDomains))}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase transition-colors cursor-pointer"
+                      >
+                        Tout cocher
+                      </button>
+                    </div>
+                    {allDomains.map((dom) => {
+                      const isChecked = selectedFilterDomains.has(dom);
+                      return (
+                        <label
+                          key={dom}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-900/60 cursor-pointer text-slate-300 hover:text-white transition-all text-xs font-medium"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              setSelectedFilterDomains((prev) => {
+                                const next = new Set(prev);
+                                if (isChecked) {
+                                  next.delete(dom);
+                                } else {
+                                  next.add(dom);
+                                }
+                                return next;
+                              });
+                            }}
+                            className="rounded border-slate-800 text-indigo-650 focus:ring-indigo-550 w-3.5 h-3.5 bg-slate-900"
+                          />
+                          <span className="capitalize">{dom}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {/* Type Filter */}
               <select
@@ -1251,6 +1385,45 @@ export default function GraphPage() {
                 <option value="pont_normatif">Pont Normatif</option>
                 <option value="definitionnel">Définitionnel</option>
               </select>
+
+              {/* Focus Depth Slider/Select */}
+              {focusNodeId && (
+                <div className="flex items-center gap-2 animate-fade-in">
+                  <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-amber-500" />
+                    Focus Actif
+                  </span>
+                  <select
+                    value={focusDepth}
+                    onChange={(e) => setFocusDepth(Number(e.target.value))}
+                    className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                  >
+                    <option value={1}>Profondeur 1 (Voisins directs)</option>
+                    <option value={2}>Profondeur 2 (Niveau 2)</option>
+                    <option value={3}>Profondeur 3 (Niveau 3)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Hidden Count & Reset */}
+              {(selectedFilterDomains.size > 0 || focusNodeId !== null || selectedType !== "") && (
+                <div className="flex items-center gap-3 text-xs bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-1.5">
+                  <span className="text-slate-400 font-semibold">
+                    {hiddenCount === 1 ? "1 élément masqué" : `${hiddenCount} éléments masqués`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFilterDomains(new Set());
+                      setFocusNodeId(null);
+                      setSelectedType("");
+                    }}
+                    className="text-indigo-400 hover:text-indigo-300 font-bold uppercase text-[10px] border-l border-slate-800/80 pl-3 transition-colors cursor-pointer"
+                  >
+                    Tout afficher
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Legend */}
@@ -1337,7 +1510,7 @@ export default function GraphPage() {
           <div className="absolute inset-0 p-6">
             <CytoscapeGraph
               nodes={cytoscapeNodes}
-              edges={graphData?.edges || []}
+              edges={cytoscapeEdges}
               layoutType={cytoscapeLayout}
               onNodeClick={handleNodeClick}
               onEdgeClick={handleEdgeClick}
@@ -1788,13 +1961,34 @@ export default function GraphPage() {
                 </div>
               </div>
               
-              {/* Footer with Delete Button */}
-              <div className="p-6 border-t border-slate-900 bg-slate-950 flex items-center justify-end">
+              {/* Footer with Delete and Focus Buttons */}
+              <div className="p-6 border-t border-slate-900 bg-slate-950 flex flex-col gap-3">
+                <Button
+                  onClick={() => {
+                    if (focusNodeId === nodeDetails.node.id) {
+                      setFocusNodeId(null);
+                    } else {
+                      setFocusNodeId(nodeDetails.node.id);
+                    }
+                  }}
+                  className={`w-full flex items-center justify-center gap-2 transition-colors ${
+                    focusNodeId === nodeDetails.node.id
+                      ? "bg-amber-600 hover:bg-amber-500 text-white"
+                      : "bg-indigo-600 hover:bg-indigo-500 text-white"
+                  }`}
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>
+                    {focusNodeId === nodeDetails.node.id
+                      ? "Retirer le focus"
+                      : "Focus (Voisinage N sauts)"}
+                  </span>
+                </Button>
                 <Button
                   variant="destructive"
                   onClick={() => handleDeleteNode(nodeDetails.node.id)}
                   disabled={deleteNodeMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 hover:bg-red-600 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 hover:bg-red-600 transition-colors shadow-sm cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                   Supprimer la thèse
