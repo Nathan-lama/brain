@@ -733,7 +733,8 @@ class CoherenceSolverService:
         """
         Solves CP-SAT multiple times to find n quasi-optimal alternative configurations.
 
-        The returned alternatives are sorted canonically by (incoherence_score, tuple(sorted(accepted_nodes)))
+        The returned alternatives are sorted canonically by score (descending),
+        incoherence_score (ascending), and tuple(sorted(accepted_nodes))
         to ensure stable ordering across runs.
         """
         (
@@ -763,25 +764,6 @@ class CoherenceSolverService:
                 optimal_accepted.add(nid)
             else:
                 optimal_rejected.add(nid)
-
-        # Calculate baseline incoherence score
-        baseline_violated_constraints = (
-            CoherenceSolverService._compute_violated_constraints(
-                nodes_map, scheme_nodes, edges, optimal_accepted
-            )
-        )
-        baseline_incoherence = CoherenceSolverService._calculate_incoherence(
-            baseline_violated_constraints
-        )
-
-        # Force alternatives to have incoherence >= baseline incoherence
-        if soft_implications:
-            baseline_incoherence_scaled = int(round(baseline_incoherence * SCALE))
-            implication_violations = []
-            for inputs, v, s_node, satisfied in soft_implications:
-                weight_int = int(s_node.weight * SCALE)
-                implication_violations.append(satisfied.Not() * weight_int)
-            model.Add(sum(implication_violations) >= baseline_incoherence_scaled)
 
         # Collect solutions
         alternatives = []
@@ -850,6 +832,7 @@ class CoherenceSolverService:
                     "violated_constraints": alt_violated_constraints,
                     "arbitrated_tensions": alt_arbitrated_tensions,
                     "incoherence_score": round(incoherence_score, 3),
+                    "score": round(solver.ObjectiveValue() / SCALE, 3),
                 }
             )
 
@@ -863,9 +846,9 @@ class CoherenceSolverService:
                     literals.append(var)
             model.AddBoolOr(literals)
 
-        # Sort alternatives canonically by key: (incoherence_score, tuple(sorted(accepted_node_uuids)))
+        # Sort alternatives canonically by key: (score descending, incoherence_score ascending, tuple(sorted(accepted_node_uuids)))
         alternatives.sort(
-            key=lambda a: (a["incoherence_score"], tuple(sorted(a["accepted"])))
+            key=lambda a: (-a["score"], a["incoherence_score"], tuple(sorted(a["accepted"])))
         )
 
         # Re-assign solution_index to match sorted order

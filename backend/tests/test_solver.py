@@ -119,8 +119,6 @@ async def test_coherence_solver_endpoints():
                     )
                     < 1e-5
                 )
-                # Assert baseline incoherence is <= alternative incoherence
-                assert solve_data2["incoherence_score"] <= alt["incoherence_score"]
 
     finally:
         app.dependency_overrides.clear()
@@ -672,3 +670,91 @@ async def test_tie_break_bound_guard(monkeypatch):
         assert "DEDUCTIVE_TIE_BREAK guard violated" in str(exc_info.value)
 
     await test_engine.dispose()
+
+
+async def test_alternatives_incoherence_below_baseline():
+    import uuid
+    from src.models import Edge, SchemeType, SchemeStrength, TierKind, NodeType, SourceTargetKind, EdgeRole
+
+    test_engine = create_async_engine(DATABASE_URL, echo=False)
+    test_session_local = async_sessionmaker(
+        test_engine, expire_on_commit=False, class_=AsyncSession
+    )
+
+    async def override_get_db():
+        async with test_session_local() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Seed custom mini-fixture demonstrating incoherence below baseline
+    async with test_session_local() as session:
+        from sqlalchemy import delete
+        await session.execute(delete(Edge))
+        await session.execute(delete(SchemeNode))
+        await session.execute(delete(Node))
+        await session.commit()
+
+        n1_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+        n2_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+        n3_id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+        n4_id = uuid.UUID("44444444-4444-4444-4444-444444444444")
+
+        # n1 (rank 3), n2 (rank 3), n3 (rank 1), n4 (rank 5)
+        n1 = Node(id=n1_id, type=NodeType.DESCRIPTIF, domain="test", text="n1", tier=TierKind.MOYEN, weight=1.0)
+        n2 = Node(id=n2_id, type=NodeType.DESCRIPTIF, domain="test", text="n2", tier=TierKind.MOYEN, weight=1.0)
+        n3 = Node(id=n3_id, type=NodeType.DESCRIPTIF, domain="test", text="n3", tier=TierKind.SPECULATIF, weight=1.0)
+        n4 = Node(id=n4_id, type=NodeType.DESCRIPTIF, domain="test", text="n4", tier=TierKind.CERTAIN, weight=1.0)
+
+        # Inference: n1 ∧ n2 → n3 (defeasible, weight=2)
+        inf_id = uuid.UUID("55555555-5555-5555-5555-555555555555")
+        inf = SchemeNode(id=inf_id, scheme=SchemeType.INFERENCE, strength=SchemeStrength.DEFAISABLE_FORT, weight=2.0)
+
+        # Conflict: n3 ↔ n4 (weight=1)
+        conflit_id = uuid.UUID("66666666-6666-6666-6666-666666666666")
+        conflit = SchemeNode(id=conflit_id, scheme=SchemeType.CONFLIT, weight=1.0)
+
+        session.add_all([n1, n2, n3, n4, inf, conflit])
+        await session.commit()
+
+        # Edges
+        e1 = Edge(id=uuid.uuid4(), source_id=n1_id, target_id=inf_id, source_kind=SourceTargetKind.NODE, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.PREMISE)
+        e2 = Edge(id=uuid.uuid4(), source_id=n2_id, target_id=inf_id, source_kind=SourceTargetKind.NODE, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.PREMISE)
+        e3 = Edge(id=uuid.uuid4(), source_id=inf_id, target_id=n3_id, source_kind=SourceTargetKind.SCHEME, target_kind=SourceTargetKind.NODE, role=EdgeRole.CONCLUSION)
+        
+        e4 = Edge(id=uuid.uuid4(), source_id=n3_id, target_id=conflit_id, source_kind=SourceTargetKind.NODE, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.CONFLICTING)
+        e5 = Edge(id=uuid.uuid4(), source_id=conflit_id, target_id=n4_id, source_kind=SourceTargetKind.SCHEME, target_kind=SourceTargetKind.NODE, role=EdgeRole.CONFLICTED)
+
+        session.add_all([e1, e2, e3, e4, e5])
+        await session.commit()
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Query solve (baseline)
+            res_solve = await client.post("/solve")
+            assert res_solve.status_code == 200
+            solve_data = res_solve.json()
+            assert solve_data["incoherence_score"] == 2.0  # I1 is violated because n3 is rejected (due to conflict with certain n4)
+
+            # Query alternatives
+            res_alts = await client.get("/solve/alternatives?n=3")
+            assert res_alts.status_code == 200
+            alts_data = res_alts.json()
+            
+            # Assert that score is populated, strictly non-increasing (or equal),
+            # and at least one alternative has incoherence below baseline (2.0)
+            assert len(alts_data) > 0
+            has_lower_incoherence = False
+            prev_score = float("inf")
+            for alt in alts_data:
+                assert alt["score"] is not None
+                assert alt["score"] <= prev_score
+                prev_score = alt["score"]
+                if alt["incoherence_score"] < solve_data["incoherence_score"]:
+                    has_lower_incoherence = True
+            
+            assert has_lower_incoherence
+    finally:
+        app.dependency_overrides.clear()
+        await test_engine.dispose()
