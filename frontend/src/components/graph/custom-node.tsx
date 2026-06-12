@@ -92,10 +92,11 @@ export interface CustomGraphNodeData {
   overcommitted?: boolean;
   gap?: number | null;
   metadata?: { tier?: string | null } | null;
+  label_court?: string | null;
 }
 
 export function CustomGraphNode({ data, selected }: { data: CustomGraphNodeData; selected?: boolean }) {
-  const { text, type, domain, confidence, tier, weight, isTension, isCoherenceActive, isAccepted, isRejected, isDiff, coherence, correspondence, overcommitted, gap } = data;
+  const { text, type, domain, confidence, tier, weight, isTension, isCoherenceActive, isAccepted, isRejected, isDiff, coherence, correspondence, overcommitted, gap, label_court } = data;
   const colors = TYPE_COLORS[type] || TYPE_COLORS.descriptif;
   
   const isFactual = ["descriptif", "empirique", "definitionnel"].includes(type);
@@ -157,7 +158,7 @@ export function CustomGraphNode({ data, selected }: { data: CustomGraphNodeData;
         >
           <div className="-rotate-45 text-center p-2.5 flex flex-col items-center justify-center relative group/tooltip w-full h-full">
             <span className="text-[8px] font-bold text-amber-400/80 uppercase tracking-widest leading-none mb-1">
-              Pont
+              Pont {label_court ? `• ${label_court.toUpperCase()}` : ""}
             </span>
             <p className="text-[10px] font-semibold text-amber-200 leading-snug max-h-16 overflow-hidden text-ellipsis line-clamp-3">
               {text}
@@ -244,10 +245,17 @@ export function CustomGraphNode({ data, selected }: { data: CustomGraphNodeData;
         />
 
         <div className="flex items-center justify-between mb-2 mt-1">
-          {/* Badge type */}
-          <span className={`text-[9px] font-bold uppercase tracking-wider ${colors.text}`}>
-            {colors.label}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {label_court && (
+              <span className="text-[10px] font-extrabold px-1 py-0.5 rounded bg-slate-950 border border-slate-900 text-slate-300">
+                {label_court.toUpperCase()}
+              </span>
+            )}
+            {/* Badge type */}
+            <span className={`text-[9px] font-bold uppercase tracking-wider ${colors.text}`}>
+              {colors.label}
+            </span>
+          </div>
           {/* Badge domain */}
           <span className="text-[9px] px-2 py-0.5 rounded-full bg-slate-950/80 border border-slate-850 text-slate-400 font-semibold uppercase tracking-wide">
             {domain}

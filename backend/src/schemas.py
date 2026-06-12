@@ -51,6 +51,7 @@ class NodeOut(BaseModel):
     updated_at: datetime
     coherence: str | None = None
     correspondence: float | None = None
+    label_court: str | None = None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -61,6 +62,7 @@ class NodeOut(BaseModel):
     @classmethod
     def resolve_metadata(cls, data: Any) -> Any:
         if hasattr(data, "__table__"):
+            from src.services.solver import get_label_court
             return {
                 "id": data.id,
                 "type": data.type,
@@ -76,7 +78,19 @@ class NodeOut(BaseModel):
                 "updated_at": data.updated_at,
                 "coherence": getattr(data, "coherence", None),
                 "correspondence": getattr(data, "correspondence", None),
+                "label_court": get_label_court(data.id, data.metadata_),
             }
+        elif isinstance(data, dict):
+            if "label_court" not in data:
+                from src.services.solver import get_label_court
+                node_id = data.get("id")
+                if isinstance(node_id, str):
+                    try:
+                        node_id = UUID(node_id)
+                    except ValueError:
+                        pass
+                if isinstance(node_id, UUID):
+                    data["label_court"] = get_label_court(node_id, data.get("metadata"))
         return data
 
 
@@ -216,6 +230,7 @@ class FlatEdge(BaseModel):
     scheme_id: UUID
     strength: SchemeStrength | None = None
     weight: float | None = None
+    scheme_label: str | None = None
 
     model_config = ConfigDict(
         populate_by_name=True,

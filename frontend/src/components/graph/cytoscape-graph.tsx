@@ -28,26 +28,32 @@ export function CytoscapeGraph({ nodes, edges, layoutType, onNodeClick, onEdgeCl
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const cyNodes = nodes.map((n) => ({
-      data: {
-        id: n.id,
-        label: n.text.length > 35 ? n.text.substring(0, 35) + "..." : n.text,
-        type: n.type,
-        confidence: n.confidence,
-        domain: n.domain,
-        isTension: n.isTension,
-      },
-    }));
+    const cyNodes = nodes.map((n) => {
+      const labelPrefix = (n as any).label_court ? `[${(n as any).label_court.toUpperCase()}] ` : "";
+      return {
+        data: {
+          id: n.id,
+          label: labelPrefix + (n.text.length > 35 ? n.text.substring(0, 35) + "..." : n.text),
+          type: n.type,
+          confidence: n.confidence,
+          domain: n.domain,
+          isTension: n.isTension,
+        },
+      };
+    });
 
-    const cyEdges = edges.map((e) => ({
-      data: {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        relation: e.relation,
-        strength: e.strength,
-      },
-    }));
+    const cyEdges = edges.map((e) => {
+      const relationLabel = e.scheme_label ? `${e.relation} (${e.scheme_label.toUpperCase()})` : e.relation;
+      return {
+        data: {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          relation: relationLabel,
+          strength: e.strength,
+        },
+      };
+    });
 
     const cy = cytoscape({
       container: containerRef.current,

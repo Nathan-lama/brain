@@ -762,6 +762,7 @@ async def get_graph(
                     edge_id = uuid.uuid5(
                         uuid.NAMESPACE_DNS, f"{in_edge.id}-{out_edge.id}"
                     )
+                    from src.services.solver import get_label_court
                     flat_edges.append(
                         {
                             "id": edge_id,
@@ -771,6 +772,7 @@ async def get_graph(
                             "scheme_id": s_id,
                             "strength": s_node.strength,
                             "weight": s_node.weight,
+                            "scheme_label": get_label_court(s_id, s_node.metadata_),
                         }
                     )
 

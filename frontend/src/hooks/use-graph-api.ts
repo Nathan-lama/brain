@@ -26,6 +26,7 @@ export type FlatEdge = {
   scheme_id: string;
   strength?: SchemeStrength | null;
   weight?: number | null;
+  scheme_label?: string | null;
 };
 
 export type GraphResponse = {

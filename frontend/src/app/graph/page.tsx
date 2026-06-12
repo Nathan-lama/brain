@@ -469,6 +469,11 @@ export default function GraphPage() {
           strokeWidth: strokeWidth,
           strokeDasharray: strokeDasharray,
         },
+        label: e.scheme_label ? e.scheme_label.toUpperCase() : "",
+        labelStyle: { fill: "#94a3b8", fontSize: "8px", fontWeight: "bold" },
+        labelBgPadding: [3, 2] as [number, number],
+        labelBgBorderRadius: 4,
+        labelBgStyle: { fill: "#090d16", fillOpacity: 0.85, stroke: "#1e293b", strokeWidth: 1 },
         animated: e.relation === "soutient" || e.relation === "implique",
         markerEnd: {
           type: MarkerType.ArrowClosed,
