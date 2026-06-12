@@ -454,6 +454,7 @@ class WhatIfOp(BaseModel):
 
 class StructuralWhatIfRequest(BaseModel):
     ops: list[WhatIfOp]
+    n_alternatives: int | None = None
 
 
 class StructuralWhatIfBaseline(BaseModel):
@@ -464,12 +465,18 @@ class StructuralWhatIfBaseline(BaseModel):
 class StructuralWhatIfFlips(BaseModel):
     accepted_to_rejected: list[str]
     rejected_to_accepted: list[str]
+    removed: list[str]
+
+
+class ConstraintStatus(BaseModel):
+    status: Literal["violated", "satisfied"]
+    cost: float
 
 
 class StructuralWhatIfConstraintChange(BaseModel):
     scheme: str
-    before: Literal["violated", "satisfied"]
-    after: Literal["violated", "satisfied"]
+    before: ConstraintStatus
+    after: ConstraintStatus
 
 
 class StructuralWhatIfDiff(BaseModel):
@@ -485,3 +492,4 @@ class StructuralWhatIfResponse(BaseModel):
     verdict: SolveResponse
     baseline: StructuralWhatIfBaseline
     diff: StructuralWhatIfDiff
+    alternatives: list[AlternativeSolutionOut] | None = None

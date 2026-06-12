@@ -162,3 +162,130 @@ def test_t7_idempotence_and_duplication():
         apply_ops(g, ops_dup)
     assert exc.value.index == 1
     assert "déjà existant" in str(exc.value)
+
+
+def test_t8_removed():
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi.testclient import TestClient
+
+    from src.main import app
+    from src.models import NodeType
+    from src.services.solver import GraphData, NodeRow
+
+    n1 = uuid.uuid4()
+    nodes = [
+        NodeRow(id=n1, type=NodeType.DESCRIPTIF, tier="fort", weight=0.8, text="n1", metadata_={"imported_id": "n1"}),
+    ]
+    g = GraphData(nodes=nodes, schemes=[], edges=[], credences={})
+
+    client = TestClient(app)
+    with patch("src.services.solver.load_graph", new_callable=AsyncMock) as mock_load:
+        mock_load.return_value = g
+        response = client.post("/solve/whatif", json={
+            "ops": [
+                {"op": "remove_node", "target": "n1"}
+            ]
+        })
+        assert response.status_code == 200
+        data = response.json()
+        flips = data["diff"]["flips"]
+        assert "n1" in flips["removed"]
+        assert "n1" not in flips["accepted_to_rejected"]
+        assert "n1" not in flips["rejected_to_accepted"]
+
+
+def test_t9_constraints_changed_cost():
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi.testclient import TestClient
+
+    from src.main import app
+    from src.models import EdgeRole, NodeType, SchemeType, SourceTargetKind
+    from src.services.solver import EdgeRow, GraphData, NodeRow, SchemeRow
+
+    n1 = uuid.uuid4()
+    n2 = uuid.uuid4()
+    n3 = uuid.uuid4()
+    ra1 = uuid.uuid4()
+    ca1 = uuid.uuid4()
+
+    nodes = [
+        NodeRow(id=n1, type=NodeType.DESCRIPTIF, tier="certain", weight=1.0, text="n1", metadata_={"imported_id": "n1"}),
+        NodeRow(id=n2, type=NodeType.DESCRIPTIF, tier="speculatif", weight=0.2, text="n2", metadata_={"imported_id": "n2"}),
+        NodeRow(id=n3, type=NodeType.DESCRIPTIF, tier="certain", weight=1.0, text="n3", metadata_={"imported_id": "n3"}),
+    ]
+    schemes = [
+        SchemeRow(id=ra1, scheme=SchemeType.INFERENCE, strength="defaisable_fort", weight=2.0, metadata_={"imported_id": "ra1"}),
+        SchemeRow(id=ca1, scheme=SchemeType.CONFLIT, strength=None, weight=1.0, metadata_={"imported_id": "ca1"}),
+    ]
+    edges = [
+        # Inference: n1 -> ra1 -> n2
+        EdgeRow(source_id=n1, source_kind=SourceTargetKind.NODE, target_id=ra1, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.PREMISE),
+        EdgeRow(source_id=ra1, source_kind=SourceTargetKind.SCHEME, target_id=n2, target_kind=SourceTargetKind.NODE, role=EdgeRole.CONCLUSION),
+        # Conflict: n2 <-> ca1 <-> n3
+        EdgeRow(source_id=n2, source_kind=SourceTargetKind.NODE, target_id=ca1, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.CONFLICTING),
+        EdgeRow(source_id=ca1, source_kind=SourceTargetKind.SCHEME, target_id=n3, target_kind=SourceTargetKind.NODE, role=EdgeRole.CONFLICTED),
+    ]
+    g = GraphData(nodes=nodes, schemes=schemes, edges=edges, credences={})
+
+    client = TestClient(app)
+    with patch("src.services.solver.load_graph", new_callable=AsyncMock) as mock_load:
+        mock_load.return_value = g
+        response = client.post("/solve/whatif", json={
+            "ops": [
+                {"op": "set_strength", "target": "ra1", "strength": "defaisable_faible"}
+            ]
+        })
+        assert response.status_code == 200
+        data = response.json()
+        cc = data["diff"]["constraints_changed"]
+        ra1_change = next((c for c in cc if c["scheme"] == "ra1"), None)
+        assert ra1_change is not None
+        assert ra1_change["before"]["status"] == "violated"
+        assert ra1_change["before"]["cost"] == 2.0
+        assert ra1_change["after"]["status"] == "violated"
+        assert ra1_change["after"]["cost"] == 1.0
+
+
+def test_t10_enumerate_alternatives():
+    from src.models import EdgeRole, NodeType, SchemeType, SourceTargetKind
+    from src.services.solver import (
+        EdgeRow,
+        GraphData,
+        NodeRow,
+        SchemeRow,
+        enumerate_alternatives,
+    )
+
+    n1 = uuid.uuid4()
+    n2 = uuid.uuid4()
+    ca1 = uuid.uuid4()
+
+    nodes = [
+        NodeRow(id=n1, type=NodeType.DESCRIPTIF, tier="moyen", weight=0.6, text="n1", metadata_={"imported_id": "n1"}),
+        NodeRow(id=n2, type=NodeType.DESCRIPTIF, tier="moyen", weight=0.6, text="n2", metadata_={"imported_id": "n2"}),
+    ]
+    schemes = [
+        SchemeRow(id=ca1, scheme=SchemeType.CONFLIT, strength=None, weight=1.0, metadata_={"imported_id": "ca1"}),
+    ]
+    edges = [
+        EdgeRow(source_id=n1, source_kind=SourceTargetKind.NODE, target_id=ca1, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.CONFLICTING),
+        EdgeRow(source_id=ca1, source_kind=SourceTargetKind.SCHEME, target_id=n2, target_kind=SourceTargetKind.NODE, role=EdgeRole.CONFLICTED),
+    ]
+
+    g = GraphData(nodes=nodes, schemes=schemes, edges=edges, credences={})
+
+    alts = enumerate_alternatives(g, n=2)
+
+    assert isinstance(alts, list)
+    assert len(alts) > 0
+
+    for i in range(len(alts) - 1):
+        a1 = alts[i]
+        a2 = alts[i+1]
+        assert a1["score"] >= a2["score"]
+        if a1["score"] == a2["score"]:
+            assert a1["incoherence_score"] <= a2["incoherence_score"]
+            if a1["incoherence_score"] == a2["incoherence_score"]:
+                assert tuple(sorted(a1["accepted"])) <= tuple(sorted(a2["accepted"]))

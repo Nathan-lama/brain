@@ -292,6 +292,135 @@ def solve_graph(
     }
 
 
+def enumerate_alternatives(g: GraphData, n: int) -> list[dict]:
+    """
+    Solves CP-SAT multiple times to find n quasi-optimal alternative configurations.
+
+    The returned alternatives are sorted canonically by score (descending),
+    incoherence_score (ascending), and tuple(sorted(accepted_nodes))
+    to ensure stable ordering across runs.
+    """
+    (
+        model,
+        x,
+        nodes_map,
+        schemes,
+        edges,
+        soft_implications,
+        soft_conflicts,
+        conflicts_map,
+    ) = CoherenceSolverService._build_model_pure(g)
+
+    # 1. Solve optimal solution first to serve as baseline comparison
+    solver = make_solver()
+    status = solver.Solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return []
+
+    optimal_accepted = set()
+    optimal_rejected = set()
+    optimal_assignment = {}
+    for nid, var in x.items():
+        val = solver.Value(var)
+        optimal_assignment[nid] = val
+        if val == 1:
+            optimal_accepted.add(nid)
+        else:
+            optimal_rejected.add(nid)
+
+    # Collect solutions
+    alternatives = []
+
+    # Exclude optimal solution first to find alternatives
+    literals = []
+    for nid, var in x.items():
+        val = optimal_assignment[nid]
+        if val == 1:
+            literals.append(var.Not())
+        else:
+            literals.append(var)
+    model.AddBoolOr(literals)
+
+    # Loop to find alternative configurations
+    for idx in range(1, n + 1):
+        solver = make_solver()
+        status = solver.Solve(model)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            break
+
+        alt_accepted = []
+        alt_rejected = []
+        alt_assignment = {}
+        for nid, var in x.items():
+            val = solver.Value(var)
+            alt_assignment[nid] = val
+            if val == 1:
+                alt_accepted.append(nid)
+            else:
+                alt_rejected.append(nid)
+
+        # Compare differences with optimal baseline
+        differs_accepted = [
+            nid for nid in alt_accepted if nid not in optimal_accepted
+        ]
+        differs_rejected = [
+            nid for nid in alt_rejected if nid not in optimal_rejected
+        ]
+
+        # Calculate violated constraints and arbitrated tensions for this alternative solution
+        alt_violated_constraints = (
+            CoherenceSolverService._compute_violated_constraints(
+                nodes_map, schemes, edges, set(alt_accepted)
+            )
+        )
+        alt_arbitrated_tensions = (
+            CoherenceSolverService._compute_arbitrated_tensions(
+                nodes_map, schemes, edges, set(alt_accepted)
+            )
+        )
+        incoherence_score = CoherenceSolverService._calculate_incoherence(
+            alt_violated_constraints
+        )
+
+        # Assert cost invariant for this alternative configuration
+        assert_cost_invariant(alt_violated_constraints, incoherence_score)
+
+        alternatives.append(
+            {
+                "solution_index": idx,
+                "accepted": alt_accepted,
+                "rejected": alt_rejected,
+                "differs_accepted": differs_accepted,
+                "differs_rejected": differs_rejected,
+                "violated_constraints": alt_violated_constraints,
+                "arbitrated_tensions": alt_arbitrated_tensions,
+                "incoherence_score": round(incoherence_score, 3),
+                "score": round(solver.ObjectiveValue() / SCALE, 3),
+            }
+        )
+
+        # Exclude this alternative solution from future runs
+        literals = []
+        for nid, var in x.items():
+            val = alt_assignment[nid]
+            if val == 1:
+                literals.append(var.Not())
+            else:
+                literals.append(var)
+        model.AddBoolOr(literals)
+
+    # Sort alternatives canonically by key: (score descending, incoherence_score ascending, tuple(sorted(accepted_node_uuids)))
+    alternatives.sort(
+        key=lambda a: (-a["score"], a["incoherence_score"], tuple(sorted(a["accepted"])))
+    )
+
+    # Re-assign solution_index to match sorted order
+    for sorted_idx, alt in enumerate(alternatives, 1):
+        alt["solution_index"] = sorted_idx
+
+    return alternatives
+
+
 class CoherenceSolverService:
     """
     Service to optimize global argument coherence using a CP-SAT solver.
@@ -834,122 +963,4 @@ class CoherenceSolverService:
         to ensure stable ordering across runs.
         """
         g = await load_graph(db)
-        (
-            model,
-            x,
-            nodes_map,
-            schemes,
-            edges,
-            soft_implications,
-            soft_conflicts,
-            conflicts_map,
-        ) = CoherenceSolverService._build_model_pure(g)
-
-        # 1. Solve optimal solution first to serve as baseline comparison
-        solver = make_solver()
-        status = solver.Solve(model)
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return []
-
-        optimal_accepted = set()
-        optimal_rejected = set()
-        optimal_assignment = {}
-        for nid, var in x.items():
-            val = solver.Value(var)
-            optimal_assignment[nid] = val
-            if val == 1:
-                optimal_accepted.add(nid)
-            else:
-                optimal_rejected.add(nid)
-
-        # Collect solutions
-        alternatives = []
-
-        # Exclude optimal solution first to find alternatives
-        literals = []
-        for nid, var in x.items():
-            val = optimal_assignment[nid]
-            if val == 1:
-                literals.append(var.Not())
-            else:
-                literals.append(var)
-        model.AddBoolOr(literals)
-
-        # Loop to find alternative configurations
-        for idx in range(1, n + 1):
-            solver = make_solver()
-            status = solver.Solve(model)
-            if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                break
-
-            alt_accepted = []
-            alt_rejected = []
-            alt_assignment = {}
-            for nid, var in x.items():
-                val = solver.Value(var)
-                alt_assignment[nid] = val
-                if val == 1:
-                    alt_accepted.append(nid)
-                else:
-                    alt_rejected.append(nid)
-
-            # Compare differences with optimal baseline
-            differs_accepted = [
-                nid for nid in alt_accepted if nid not in optimal_accepted
-            ]
-            differs_rejected = [
-                nid for nid in alt_rejected if nid not in optimal_rejected
-            ]
-
-            # Calculate violated constraints and arbitrated tensions for this alternative solution
-            alt_violated_constraints = (
-                CoherenceSolverService._compute_violated_constraints(
-                    nodes_map, schemes, edges, set(alt_accepted)
-                )
-            )
-            alt_arbitrated_tensions = (
-                CoherenceSolverService._compute_arbitrated_tensions(
-                    nodes_map, schemes, edges, set(alt_accepted)
-                )
-            )
-            incoherence_score = CoherenceSolverService._calculate_incoherence(
-                alt_violated_constraints
-            )
-
-            # Assert cost invariant for this alternative configuration
-            assert_cost_invariant(alt_violated_constraints, incoherence_score)
-
-            alternatives.append(
-                {
-                    "solution_index": idx,
-                    "accepted": alt_accepted,
-                    "rejected": alt_rejected,
-                    "differs_accepted": differs_accepted,
-                    "differs_rejected": differs_rejected,
-                    "violated_constraints": alt_violated_constraints,
-                    "arbitrated_tensions": alt_arbitrated_tensions,
-                    "incoherence_score": round(incoherence_score, 3),
-                    "score": round(solver.ObjectiveValue() / SCALE, 3),
-                }
-            )
-
-            # Exclude this alternative solution from future runs
-            literals = []
-            for nid, var in x.items():
-                val = alt_assignment[nid]
-                if val == 1:
-                    literals.append(var.Not())
-                else:
-                    literals.append(var)
-            model.AddBoolOr(literals)
-
-        # Sort alternatives canonically by key: (score descending, incoherence_score ascending, tuple(sorted(accepted_node_uuids)))
-        alternatives.sort(
-            key=lambda a: (-a["score"], a["incoherence_score"], tuple(sorted(a["accepted"])))
-        )
-
-        # Re-assign solution_index to match sorted order
-        for sorted_idx, alt in enumerate(alternatives, 1):
-            alt["solution_index"] = sorted_idx
-
-        return alternatives
+        return enumerate_alternatives(g, n)

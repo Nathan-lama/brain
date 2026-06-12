@@ -1605,7 +1605,12 @@ async def get_solve_alternatives(
 async def solve_whatif(
     payload: StructuralWhatIfRequest, db: AsyncSession = Depends(get_db)
 ):
-    from src.services.solver import get_label_court, load_graph, solve_graph
+    from src.services.solver import (
+        enumerate_alternatives,
+        get_label_court,
+        load_graph,
+        solve_graph,
+    )
     from src.services.whatif import WhatIfValidationError, apply_ops
 
     g = await load_graph(db)
@@ -1633,12 +1638,17 @@ async def solve_whatif(
         n = all_nodes.get(node_id)
         return get_label_court(node_id, n.metadata_ if n else None)
 
+    removed_node_ids = {n.id for n in g.nodes} - {n.id for n in g_mutated.nodes}
+    removed_labels = sorted([get_lbl(nid) for nid in removed_node_ids])
+
     accepted_to_rejected = []
     rejected_to_accepted = []
 
     all_node_ids = set(base_accepted_ids) | set(baseline_verdict["rejected"]) | set(mutated_accepted_ids) | set(mutated_verdict["rejected"])
 
     for nid in all_node_ids:
+        if nid in removed_node_ids:
+            continue
         was_accepted = nid in base_accepted_ids
         is_accepted = nid in mutated_accepted_ids
         if was_accepted and not is_accepted:
@@ -1657,28 +1667,48 @@ async def solve_whatif(
         s = all_schemes.get(scheme_id)
         return get_label_court(scheme_id, s.metadata_ if s else None)
 
-    base_violated = {vc.scheme_id if hasattr(vc, "scheme_id") else vc["scheme_id"] for vc in baseline_verdict["violated_constraints"]}
-    mutated_violated = {vc.scheme_id if hasattr(vc, "scheme_id") else vc["scheme_id"] for vc in mutated_verdict["violated_constraints"]}
+    base_violated_map = {
+        (vc.scheme_id if hasattr(vc, "scheme_id") else vc["scheme_id"]): (vc.cost if hasattr(vc, "cost") else vc["cost"])
+        for vc in baseline_verdict["violated_constraints"]
+    }
+    mutated_violated_map = {
+        (vc.scheme_id if hasattr(vc, "scheme_id") else vc["scheme_id"]): (vc.cost if hasattr(vc, "cost") else vc["cost"])
+        for vc in mutated_verdict["violated_constraints"]
+    }
 
     constraints_changed = []
     all_scheme_ids = set(base_schemes.keys()) | set(mutated_schemes.keys())
     for sid in all_scheme_ids:
-        status_before = "violated" if sid in base_violated else ("satisfied" if sid in base_schemes else None)
-        status_after = "violated" if sid in mutated_violated else ("satisfied" if sid in mutated_schemes else None)
+        status_before = "violated" if sid in base_violated_map else ("satisfied" if sid in base_schemes else None)
+        status_after = "violated" if sid in mutated_violated_map else ("satisfied" if sid in mutated_schemes else None)
 
-        if status_before is not None and status_after is not None and status_before != status_after:
-            constraints_changed.append({
-                "scheme": get_scheme_lbl(sid),
-                "before": status_before,
-                "after": status_after,
-            })
+        if status_before is not None and status_after is not None:
+            cost_before = base_violated_map.get(sid, 0.0) if status_before == "violated" else 0.0
+            cost_after = mutated_violated_map.get(sid, 0.0) if status_after == "violated" else 0.0
+
+            if status_before != status_after or cost_before != cost_after:
+                constraints_changed.append({
+                    "scheme": get_scheme_lbl(sid),
+                    "before": {
+                        "status": status_before,
+                        "cost": cost_before,
+                    },
+                    "after": {
+                        "status": status_after,
+                        "cost": cost_after,
+                    }
+                })
 
     constraints_changed.sort(key=lambda c: c["scheme"])
 
     score_delta = round(mutated_verdict["score"] - baseline_verdict["score"], 3)
     incoherence_delta = round(mutated_verdict["incoherence_score"] - baseline_verdict["incoherence_score"], 3)
 
-    return {
+    alts = None
+    if payload.n_alternatives is not None and payload.n_alternatives > 0:
+        alts = enumerate_alternatives(g_mutated, payload.n_alternatives)
+
+    res_body = {
         "verdict": mutated_verdict,
         "baseline": {
             "score": baseline_verdict["score"],
@@ -1690,12 +1720,17 @@ async def solve_whatif(
             "flips": {
                 "accepted_to_rejected": accepted_to_rejected,
                 "rejected_to_accepted": rejected_to_accepted,
+                "removed": removed_labels,
             },
             "constraints_changed": constraints_changed,
             "cascaded_schemes": report.cascaded_schemes,
             "ops_applied": report.ops_applied,
         }
     }
+    if alts is not None:
+        res_body["alternatives"] = alts
+
+    return res_body
 
 
 @app.get("/causal/graph", response_model=CausalGraphResponse)
