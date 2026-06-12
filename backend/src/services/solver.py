@@ -1,5 +1,6 @@
 import math
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import networkx as nx
@@ -24,6 +25,101 @@ from src.schemas import (
 
 SCALE = 10000
 DEDUCTIVE_TIE_BREAK = 1
+
+
+@dataclass(frozen=True)
+class NodeRow:
+    id: uuid.UUID
+    type: Any
+    tier: Any
+    weight: float
+    text: str
+    metadata_: dict | None = None
+
+
+@dataclass(frozen=True)
+class SchemeRow:
+    id: uuid.UUID
+    scheme: Any
+    strength: Any
+    weight: float
+    metadata_: dict | None = None
+
+
+@dataclass(frozen=True)
+class EdgeRow:
+    source_id: uuid.UUID
+    source_kind: Any
+    target_id: uuid.UUID
+    target_kind: Any
+    role: Any
+
+
+@dataclass(frozen=True)
+class GraphData:
+    nodes: list[NodeRow]
+    schemes: list[SchemeRow]
+    edges: list[EdgeRow]
+    credences: dict[uuid.UUID, float]
+
+
+async def load_graph(db: AsyncSession, use_causal_credences: bool = False) -> GraphData:
+    """Loads all nodes, schemes, and edges from DB, returning a detached GraphData container."""
+    nodes_res = await db.execute(select(Node))
+    nodes = nodes_res.scalars().all()
+    node_rows = [
+        NodeRow(
+            id=n.id,
+            type=n.type,
+            tier=n.tier,
+            weight=n.weight,
+            text=n.text,
+            metadata_=n.metadata_,
+        )
+        for n in nodes
+    ]
+
+    schemes_res = await db.execute(select(SchemeNode))
+    scheme_nodes = schemes_res.scalars().all()
+    scheme_rows = []
+    for s in scheme_nodes:
+        if s.scheme == SchemeType.INFERENCE and s.strength is None:
+            raise ValueError(f"SchemeNode {s.id} of type inference has NULL strength.")
+        scheme_rows.append(
+            SchemeRow(
+                id=s.id,
+                scheme=s.scheme,
+                strength=s.strength,
+                weight=s.weight,
+                metadata_=s.metadata_,
+            )
+        )
+
+    edges_res = await db.execute(select(Edge))
+    edges = edges_res.scalars().all()
+    edge_rows = [
+        EdgeRow(
+            source_id=e.source_id,
+            source_kind=e.source_kind,
+            target_id=e.target_id,
+            target_kind=e.target_kind,
+            role=e.role,
+        )
+        for e in edges
+    ]
+
+    credences = {}
+    if use_causal_credences:
+        from src.services.causal import CausalService
+
+        credences = await CausalService.compute_credences(db)
+
+    return GraphData(
+        nodes=node_rows,
+        schemes=scheme_rows,
+        edges=edge_rows,
+        credences=credences,
+    )
 
 
 class CostInvariantViolation(Exception):
@@ -121,6 +217,72 @@ def get_label_court(node_id: uuid.UUID, metadata: dict | None = None) -> str:
     return str(node_id)[:6]
 
 
+def solve_graph(
+    g: GraphData,
+    tier_overrides: dict[uuid.UUID, str] = None,
+    weight_overrides: dict[uuid.UUID, float] = None,
+) -> dict:
+    """Synchronously solves the global argument coherence from a detached GraphData container."""
+    (
+        model,
+        x,
+        nodes_map,
+        schemes,
+        edges,
+        soft_implications,
+        soft_conflicts,
+        conflicts_map,
+    ) = CoherenceSolverService._build_model_pure(
+        g, weight_overrides=weight_overrides, tier_overrides=tier_overrides
+    )
+
+    solver = make_solver()
+    status = solver.Solve(model)
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return {
+            "accepted": [],
+            "rejected": [n.id for n in g.nodes],
+            "violated_constraints": [],
+            "arbitrated_tensions": [],
+            "incoherence_score": 0.0,
+            "score": 0.0,
+        }
+
+    # 1. Parse accepted and rejected claims
+    accepted_ids = []
+    rejected_ids = []
+    for nid, var in x.items():
+        if solver.Value(var) == 1:
+            accepted_ids.append(nid)
+        else:
+            rejected_ids.append(nid)
+
+    # 2. Compute violations in optimal solution
+    violated_constraints = CoherenceSolverService._compute_violated_constraints(
+        nodes_map, schemes, edges, set(accepted_ids)
+    )
+
+    # 3. Compute arbitrated tensions
+    arbitrated_tensions = CoherenceSolverService._compute_arbitrated_tensions(
+        nodes_map, schemes, edges, set(accepted_ids)
+    )
+
+    incoherence_score = CoherenceSolverService._calculate_incoherence(
+        violated_constraints
+    )
+    assert_cost_invariant(violated_constraints, incoherence_score)
+
+    return {
+        "accepted": accepted_ids,
+        "rejected": rejected_ids,
+        "violated_constraints": violated_constraints,
+        "arbitrated_tensions": arbitrated_tensions,
+        "incoherence_score": round(incoherence_score, 3),
+        "score": round(solver.ObjectiveValue() / SCALE, 3),
+    }
+
+
 class CoherenceSolverService:
     """
     Service to optimize global argument coherence using a CP-SAT solver.
@@ -140,18 +302,18 @@ class CoherenceSolverService:
         return sum(v.cost for v in violated_constraints if v.kind == "inference")
 
     @staticmethod
-    async def _build_model(
-        db: AsyncSession,
+    def _build_model_pure(
+        g: GraphData,
         weight_overrides: dict[uuid.UUID, float] = None,
         tier_overrides: dict[uuid.UUID, str] = None,
     ) -> tuple[
         cp_model.CpModel,
         dict[uuid.UUID, cp_model.IntVar],
-        dict[uuid.UUID, Node],
-        list[SchemeNode],
-        list[Edge],
-        list[tuple[uuid.UUID, uuid.UUID, SchemeNode, cp_model.IntVar]],
-        list[tuple[uuid.UUID, uuid.UUID, SchemeNode, cp_model.IntVar]],
+        dict[uuid.UUID, NodeRow],
+        list[SchemeRow],
+        list[EdgeRow],
+        list[tuple[list[uuid.UUID], uuid.UUID, SchemeRow, cp_model.IntVar]],
+        list[tuple[uuid.UUID, uuid.UUID, SchemeRow, cp_model.IntVar]],
         dict[uuid.UUID, list[uuid.UUID]],
     ]:
         """
@@ -160,24 +322,12 @@ class CoherenceSolverService:
         """
         model = cp_model.CpModel()
 
-        # 1. Fetch all elements from DB
-        nodes_res = await db.execute(select(Node))
-        nodes = nodes_res.scalars().all()
-        nodes_map = {n.id: n for n in nodes}
-
-        schemes_res = await db.execute(select(SchemeNode))
-        scheme_nodes = schemes_res.scalars().all()
-        for s in scheme_nodes:
-            if s.scheme == SchemeType.INFERENCE and s.strength is None:
-                raise ValueError(f"SchemeNode {s.id} of type inference has NULL strength.")
-
-        edges_res = await db.execute(select(Edge))
-        edges = edges_res.scalars().all()
+        nodes_map = {n.id: n for n in g.nodes}
 
         # Count deductive inference scheme nodes
         n_deductif = sum(
             1
-            for s in scheme_nodes
+            for s in g.schemes
             if s.scheme == SchemeType.INFERENCE
             and s.strength == SchemeStrength.DEDUCTIF
         )
@@ -191,11 +341,6 @@ class CoherenceSolverService:
             f"n_deductif ({n_deductif}) must be strictly less than SCALE ({SCALE}) * granularity (1.0). "
             f"Please increase SCALE to prevent tie-breaks from overturning real differences in weight or rank."
         )
-
-        # Fetch Bayesian Network credences for empirical nodes
-        from src.services.causal import CausalService
-
-        credences = await CausalService.compute_credences(db)
 
         # Helper to map float credence to rank
         def credence_to_rank(val: float) -> int:
@@ -212,7 +357,7 @@ class CoherenceSolverService:
             return 0
 
         # Helper to get rank for a node
-        def get_node_rank(node: Node) -> int:
+        def get_node_rank(node: NodeRow) -> int:
             w = (
                 weight_overrides.get(node.id, node.weight)
                 if weight_overrides
@@ -222,17 +367,17 @@ class CoherenceSolverService:
 
             if w == 0.0 or t is None:
                 return 0
-            if node.type == NodeType.EMPIRIQUE and node.id in credences:
+            if node.type == NodeType.EMPIRIQUE and node.id in g.credences:
                 if weight_overrides and node.id in weight_overrides:
                     return credence_to_rank(weight_overrides[node.id])
-                return credence_to_rank(credences[node.id])
+                return credence_to_rank(g.credences[node.id])
 
             tier_val = t.value if hasattr(t, "value") else str(t)
             return TIER_RANKS.get(tier_val, 3)
 
         # 2. Variables: accept_i for each node
         x = {}
-        for node in nodes:
+        for node in g.nodes:
             x[node.id] = model.NewBoolVar(f"accept_{node.id}")
 
             # Force revised/deleted nodes (rank 0) to be rejected (0)
@@ -246,7 +391,7 @@ class CoherenceSolverService:
         conflicts_map = {}  # key: scheme_id -> value: list of claim UUIDs involved
 
         # Add unary preferences: prefer accepting nodes with higher rank
-        for node in nodes:
+        for node in g.nodes:
             rank = get_node_rank(node)
             if rank > 0:
                 pref_weight = rank * SCALE
@@ -255,7 +400,7 @@ class CoherenceSolverService:
         # 4. Parse edges to group inputs and outputs by scheme node
         scheme_inputs = {}
         scheme_outputs = {}
-        for edge in edges:
+        for edge in g.edges:
             if (
                 edge.source_kind == SourceTargetKind.NODE
                 and edge.target_kind == SourceTargetKind.SCHEME
@@ -268,7 +413,7 @@ class CoherenceSolverService:
                 scheme_outputs.setdefault(edge.source_id, []).append(edge.target_id)
 
         # 5. Build constraints
-        for s_node in scheme_nodes:
+        for s_node in g.schemes:
             inputs = scheme_inputs.get(s_node.id, [])
             outputs = scheme_outputs.get(s_node.id, [])
             if not inputs and not outputs:
@@ -312,8 +457,6 @@ class CoherenceSolverService:
 
                     weight_int = int(s_node.weight * SCALE)
                     # Tie-break: add DEDUCTIVE_TIE_BREAK if the scheme node is deductive.
-                    # The tick is guaranteed not to overturn a real difference in rank or weight by the assertion
-                    # guard at the start of _build_model (which asserts DEDUCTIVE_TIE_BREAK * n_deductif < SCALE * 1.0).
                     if s_node.strength == SchemeStrength.DEDUCTIF:
                         weight_int += DEDUCTIVE_TIE_BREAK
                     objectives.append(weight_int * satisfied)
@@ -326,8 +469,8 @@ class CoherenceSolverService:
             model,
             x,
             nodes_map,
-            scheme_nodes,
-            edges,
+            g.schemes,
+            g.edges,
             soft_implications,
             soft_conflicts,
             conflicts_map,
@@ -669,64 +812,8 @@ class CoherenceSolverService:
         """
         Solves the coherence MAX-SAT model and returns optimal accepted/rejected claims and violations.
         """
-        (
-            model,
-            x,
-            nodes_map,
-            scheme_nodes,
-            edges,
-            soft_implications,
-            soft_conflicts,
-            conflicts_map,
-        ) = await CoherenceSolverService._build_model(
-            db, weight_overrides, tier_overrides
-        )
-
-        solver = make_solver()
-        status = solver.Solve(model)
-
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return {
-                "accepted": [],
-                "rejected": list(nodes_map.keys()),
-                "violated_constraints": [],
-                "arbitrated_tensions": [],
-                "incoherence_score": 0.0,
-                "score": 0.0,
-            }
-
-        # 1. Parse accepted and rejected claims
-        accepted_ids = []
-        rejected_ids = []
-        for nid, var in x.items():
-            if solver.Value(var) == 1:
-                accepted_ids.append(nid)
-            else:
-                rejected_ids.append(nid)
-
-        # 2. Compute violations in optimal solution
-        violated_constraints = CoherenceSolverService._compute_violated_constraints(
-            nodes_map, scheme_nodes, edges, set(accepted_ids)
-        )
-
-        # 3. Compute arbitrated tensions
-        arbitrated_tensions = CoherenceSolverService._compute_arbitrated_tensions(
-            nodes_map, scheme_nodes, edges, set(accepted_ids)
-        )
-
-        incoherence_score = CoherenceSolverService._calculate_incoherence(
-            violated_constraints
-        )
-        assert_cost_invariant(violated_constraints, incoherence_score)
-
-        return {
-            "accepted": accepted_ids,
-            "rejected": rejected_ids,
-            "violated_constraints": violated_constraints,
-            "arbitrated_tensions": arbitrated_tensions,
-            "incoherence_score": round(incoherence_score, 3),
-            "score": round(solver.ObjectiveValue() / SCALE, 3),
-        }
+        g = await load_graph(db, use_causal_credences=True)
+        return solve_graph(g, tier_overrides=tier_overrides, weight_overrides=weight_overrides)
 
     @staticmethod
     async def get_alternatives(db: AsyncSession, n: int = 3) -> list[dict]:
@@ -737,16 +824,17 @@ class CoherenceSolverService:
         incoherence_score (ascending), and tuple(sorted(accepted_nodes))
         to ensure stable ordering across runs.
         """
+        g = await load_graph(db, use_causal_credences=True)
         (
             model,
             x,
             nodes_map,
-            scheme_nodes,
+            schemes,
             edges,
             soft_implications,
             soft_conflicts,
             conflicts_map,
-        ) = await CoherenceSolverService._build_model(db)
+        ) = CoherenceSolverService._build_model_pure(g)
 
         # 1. Solve optimal solution first to serve as baseline comparison
         solver = make_solver()
@@ -807,12 +895,12 @@ class CoherenceSolverService:
             # Calculate violated constraints and arbitrated tensions for this alternative solution
             alt_violated_constraints = (
                 CoherenceSolverService._compute_violated_constraints(
-                    nodes_map, scheme_nodes, edges, set(alt_accepted)
+                    nodes_map, schemes, edges, set(alt_accepted)
                 )
             )
             alt_arbitrated_tensions = (
                 CoherenceSolverService._compute_arbitrated_tensions(
-                    nodes_map, scheme_nodes, edges, set(alt_accepted)
+                    nodes_map, schemes, edges, set(alt_accepted)
                 )
             )
             incoherence_score = CoherenceSolverService._calculate_incoherence(

@@ -660,12 +660,14 @@ async def test_tie_break_bound_guard(monkeypatch):
         await session.commit()
 
         # (a) Verify that with default constants, the guard passes
-        await CoherenceSolverService._build_model(session)
+        from src.services.solver import load_graph
+        g = await load_graph(session)
+        CoherenceSolverService._build_model_pure(g)
 
         # (b) Verify that if we monkeypatch DEDUCTIVE_TIE_BREAK to be >= SCALE, it raises AssertionError
         monkeypatch.setattr(solver_module, "DEDUCTIVE_TIE_BREAK", 20000)
         with pytest.raises(AssertionError) as exc_info:
-            await CoherenceSolverService._build_model(session)
+            CoherenceSolverService._build_model_pure(g)
 
         assert "DEDUCTIVE_TIE_BREAK guard violated" in str(exc_info.value)
 
@@ -674,7 +676,16 @@ async def test_tie_break_bound_guard(monkeypatch):
 
 async def test_alternatives_incoherence_below_baseline():
     import uuid
-    from src.models import Edge, SchemeType, SchemeStrength, TierKind, NodeType, SourceTargetKind, EdgeRole
+
+    from src.models import (
+        Edge,
+        EdgeRole,
+        NodeType,
+        SchemeStrength,
+        SchemeType,
+        SourceTargetKind,
+        TierKind,
+    )
 
     test_engine = create_async_engine(DATABASE_URL, echo=False)
     test_session_local = async_sessionmaker(
@@ -758,3 +769,41 @@ async def test_alternatives_incoherence_below_baseline():
     finally:
         app.dependency_overrides.clear()
         await test_engine.dispose()
+
+
+def test_solve_graph_purity():
+    import uuid
+
+    from src.models import (
+        EdgeRole,
+        NodeType,
+        SchemeStrength,
+        SchemeType,
+        SourceTargetKind,
+    )
+    from src.services.solver import EdgeRow, GraphData, NodeRow, SchemeRow, solve_graph
+
+    n1_id = uuid.uuid4()
+    n2_id = uuid.uuid4()
+    n3_id = uuid.uuid4()
+    s_id = uuid.uuid4()
+
+    nodes = [
+        NodeRow(id=n1_id, type=NodeType.DESCRIPTIF, tier="certain", weight=0.95, text="Premise 1"),
+        NodeRow(id=n2_id, type=NodeType.DESCRIPTIF, tier="certain", weight=0.95, text="Premise 2"),
+        NodeRow(id=n3_id, type=NodeType.DESCRIPTIF, tier="certain", weight=0.95, text="Conclusion"),
+    ]
+    schemes = [
+        SchemeRow(id=s_id, scheme=SchemeType.INFERENCE, strength=SchemeStrength.DEFAISABLE_FORT, weight=2.0),
+    ]
+    edges = [
+        EdgeRow(source_id=n1_id, source_kind=SourceTargetKind.NODE, target_id=s_id, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.PREMISE),
+        EdgeRow(source_id=n2_id, source_kind=SourceTargetKind.NODE, target_id=s_id, target_kind=SourceTargetKind.SCHEME, role=EdgeRole.PREMISE),
+        EdgeRow(source_id=s_id, source_kind=SourceTargetKind.SCHEME, target_id=n3_id, target_kind=SourceTargetKind.NODE, role=EdgeRole.CONCLUSION),
+    ]
+
+    g = GraphData(nodes=nodes, schemes=schemes, edges=edges, credences={})
+    res = solve_graph(g)
+
+    assert res["incoherence_score"] == 0.0
+    assert set(res["accepted"]) == {n1_id, n2_id, n3_id}
