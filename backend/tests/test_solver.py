@@ -807,3 +807,28 @@ def test_solve_graph_purity():
 
     assert res["incoherence_score"] == 0.0
     assert set(res["accepted"]) == {n1_id, n2_id, n3_id}
+
+
+def test_solve_graph_credences_rank_effectif():
+    import uuid
+
+    from src.models import NodeType
+    from src.services.solver import GraphData, NodeRow, solve_graph
+
+    node_id = uuid.uuid4()
+
+    # Direction 1: Node with tier fort, credences={} -> rank effectif 4 (score = 4.0)
+    nodes_1 = [
+        NodeRow(id=node_id, type=NodeType.EMPIRIQUE, tier="fort", weight=0.6, text="Empirical Node")
+    ]
+    g1 = GraphData(nodes=nodes_1, schemes=[], edges=[], credences={})
+    res1 = solve_graph(g1)
+    assert res1["score"] == 4.0
+
+    # Direction 2: Same node with credences={node_id: 0.6} -> rank 3 (score = 3.0)
+    nodes_2 = [
+        NodeRow(id=node_id, type=NodeType.EMPIRIQUE, tier="fort", weight=0.6, text="Empirical Node")
+    ]
+    g2 = GraphData(nodes=nodes_2, schemes=[], edges=[], credences={node_id: 0.6})
+    res2 = solve_graph(g2)
+    assert res2["score"] == 3.0

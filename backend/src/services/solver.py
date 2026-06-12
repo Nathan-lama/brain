@@ -812,7 +812,7 @@ class CoherenceSolverService:
         """
         Solves the coherence MAX-SAT model and returns optimal accepted/rejected claims and violations.
         """
-        g = await load_graph(db, use_causal_credences=True)
+        g = await load_graph(db)
         return solve_graph(g, tier_overrides=tier_overrides, weight_overrides=weight_overrides)
 
     @staticmethod
@@ -824,7 +824,7 @@ class CoherenceSolverService:
         incoherence_score (ascending), and tuple(sorted(accepted_nodes))
         to ensure stable ordering across runs.
         """
-        g = await load_graph(db, use_causal_credences=True)
+        g = await load_graph(db)
         (
             model,
             x,
