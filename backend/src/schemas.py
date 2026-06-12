@@ -435,3 +435,53 @@ class DomainHierarchyNode(BaseModel):
 class NoteGenerateRequest(BaseModel):
     domain: str | None = None
     node_id: UUID | None = None
+
+
+class WhatIfOp(BaseModel):
+    op: Literal["set_strength", "set_tier", "remove_node", "add_node", "add_inference", "add_conflict"]
+    target: str | None = None
+    strength: str | None = None
+    tier: str | None = None
+    label_court: str | None = None
+    text: str | None = None
+    type: str | None = None
+    label: str | None = None
+    premises: list[str] | None = None
+    conclusion: str | None = None
+    a: str | None = None
+    b: str | None = None
+
+
+class StructuralWhatIfRequest(BaseModel):
+    ops: list[WhatIfOp]
+
+
+class StructuralWhatIfBaseline(BaseModel):
+    score: float
+    incoherence_score: float
+
+
+class StructuralWhatIfFlips(BaseModel):
+    accepted_to_rejected: list[str]
+    rejected_to_accepted: list[str]
+
+
+class StructuralWhatIfConstraintChange(BaseModel):
+    scheme: str
+    before: Literal["violated", "satisfied"]
+    after: Literal["violated", "satisfied"]
+
+
+class StructuralWhatIfDiff(BaseModel):
+    score_delta: float
+    incoherence_delta: float
+    flips: StructuralWhatIfFlips
+    constraints_changed: list[StructuralWhatIfConstraintChange]
+    cascaded_schemes: list[str]
+    ops_applied: list[WhatIfOp]
+
+
+class StructuralWhatIfResponse(BaseModel):
+    verdict: SolveResponse
+    baseline: StructuralWhatIfBaseline
+    diff: StructuralWhatIfDiff

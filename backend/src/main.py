@@ -100,6 +100,8 @@ from src.schemas import (
     SnapshotDiffOut,
     SnapshotOut,
     SolveResponse,
+    StructuralWhatIfRequest,
+    StructuralWhatIfResponse,
     TensionDiffOut,
     TensionOut,
     TensionResolveRequest,
@@ -1597,6 +1599,103 @@ async def get_solve_alternatives(
     n: int = Query(3, ge=1), db: AsyncSession = Depends(get_db)
 ):
     return await CoherenceSolverService.get_alternatives(db, n)
+
+
+@app.post("/solve/whatif", response_model=StructuralWhatIfResponse)
+async def solve_whatif(
+    payload: StructuralWhatIfRequest, db: AsyncSession = Depends(get_db)
+):
+    from src.services.solver import get_label_court, load_graph, solve_graph
+    from src.services.whatif import WhatIfValidationError, apply_ops
+
+    g = await load_graph(db)
+
+    ops_list = [op.model_dump() for op in payload.ops]
+    try:
+        g_mutated, report = apply_ops(g, ops_list)
+    except WhatIfValidationError as err:
+        raise HTTPException(
+            status_code=422,
+            detail={"index": err.index, "raison": err.message}
+        ) from err
+
+    baseline_verdict = solve_graph(g)
+    mutated_verdict = solve_graph(g_mutated)
+
+    base_accepted_ids = set(baseline_verdict["accepted"])
+    mutated_accepted_ids = set(mutated_verdict["accepted"])
+
+    all_nodes = {n.id: n for n in g.nodes}
+    for n in g_mutated.nodes:
+        all_nodes[n.id] = n
+
+    def get_lbl(node_id):
+        n = all_nodes.get(node_id)
+        return get_label_court(node_id, n.metadata_ if n else None)
+
+    accepted_to_rejected = []
+    rejected_to_accepted = []
+
+    all_node_ids = set(base_accepted_ids) | set(baseline_verdict["rejected"]) | set(mutated_accepted_ids) | set(mutated_verdict["rejected"])
+
+    for nid in all_node_ids:
+        was_accepted = nid in base_accepted_ids
+        is_accepted = nid in mutated_accepted_ids
+        if was_accepted and not is_accepted:
+            accepted_to_rejected.append(get_lbl(nid))
+        elif not was_accepted and is_accepted:
+            rejected_to_accepted.append(get_lbl(nid))
+
+    accepted_to_rejected.sort()
+    rejected_to_accepted.sort()
+
+    base_schemes = {s.id: s for s in g.schemes}
+    mutated_schemes = {s.id: s for s in g_mutated.schemes}
+
+    all_schemes = {**base_schemes, **mutated_schemes}
+    def get_scheme_lbl(scheme_id):
+        s = all_schemes.get(scheme_id)
+        return get_label_court(scheme_id, s.metadata_ if s else None)
+
+    base_violated = {vc.scheme_id if hasattr(vc, "scheme_id") else vc["scheme_id"] for vc in baseline_verdict["violated_constraints"]}
+    mutated_violated = {vc.scheme_id if hasattr(vc, "scheme_id") else vc["scheme_id"] for vc in mutated_verdict["violated_constraints"]}
+
+    constraints_changed = []
+    all_scheme_ids = set(base_schemes.keys()) | set(mutated_schemes.keys())
+    for sid in all_scheme_ids:
+        status_before = "violated" if sid in base_violated else ("satisfied" if sid in base_schemes else None)
+        status_after = "violated" if sid in mutated_violated else ("satisfied" if sid in mutated_schemes else None)
+
+        if status_before is not None and status_after is not None and status_before != status_after:
+            constraints_changed.append({
+                "scheme": get_scheme_lbl(sid),
+                "before": status_before,
+                "after": status_after,
+            })
+
+    constraints_changed.sort(key=lambda c: c["scheme"])
+
+    score_delta = round(mutated_verdict["score"] - baseline_verdict["score"], 3)
+    incoherence_delta = round(mutated_verdict["incoherence_score"] - baseline_verdict["incoherence_score"], 3)
+
+    return {
+        "verdict": mutated_verdict,
+        "baseline": {
+            "score": baseline_verdict["score"],
+            "incoherence_score": baseline_verdict["incoherence_score"],
+        },
+        "diff": {
+            "score_delta": score_delta,
+            "incoherence_delta": incoherence_delta,
+            "flips": {
+                "accepted_to_rejected": accepted_to_rejected,
+                "rejected_to_accepted": rejected_to_accepted,
+            },
+            "constraints_changed": constraints_changed,
+            "cascaded_schemes": report.cascaded_schemes,
+            "ops_applied": report.ops_applied,
+        }
+    }
 
 
 @app.get("/causal/graph", response_model=CausalGraphResponse)

@@ -181,6 +181,15 @@ def make_solver() -> cp_model.CpSolver:
 TIER_RANKS = {"speculatif": 1, "faible": 2, "moyen": 3, "fort": 4, "certain": 5}
 
 
+def get_strength_weight(strength: Any) -> float:
+    from src.models import STRENGTH_TO_WEIGHT
+    val = strength.value if hasattr(strength, "value") else str(strength)
+    for k, v in STRENGTH_TO_WEIGHT.items():
+        if k.value == val or str(k) == val:
+            return v
+    raise ValueError(f"Invalid strength: {strength}")
+
+
 def get_label_court(node_id: uuid.UUID, metadata: dict | None = None) -> str:
     # 1. Check if metadata has imported_id
     if metadata and isinstance(metadata, dict) and "imported_id" in metadata:
